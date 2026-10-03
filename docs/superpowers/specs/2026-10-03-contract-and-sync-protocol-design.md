@@ -13,7 +13,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are normative as in RFC 2119.
 Every other sub-project depends on this one. It fixes **what goes over the wire** and **how sync behaves**, so the server (sub-project 2), the native engines and Flutter app (3) and the web viewer (4) can be built in parallel against one contract and one set of executable test vectors.
 
 ### In scope
-1. `api/openapi.yaml` — OpenAPI 3.1 contract for the v1 endpoints listed in §4.
+1. `api/openapi.yaml` — OpenAPI 3.0.3 contract for the v1 endpoints listed in §4 (3.0.3 because oapi-codegen's 3.1 support is only initial as of v2.8.0 and openapi-generator's is partial; migrating to 3.1 later is mechanical).
 2. `api/protocol/sync-protocol.md` — the normative protocol (§5–§9 of this spec, expanded with examples).
 3. `api/protocol/vectors/` — machine-readable conformance vectors + JSON Schema (§10).
 4. Code generation for Go, Dart, Kotlin, Swift and TypeScript, committed and drift-checked (§11).
@@ -66,6 +66,7 @@ Taskfile.yml, .github/workflows/*, LICENSE, README.md, CONTRIBUTING.md, SECURITY
 | Request IDs | Server echoes `X-Request-Id` or generates one; included in problem bodies as `request_id`. |
 | Rate limits | `429` + `Retry-After` (seconds). |
 | Compatibility | Within v1, changes MUST be additive. Clients MUST ignore unknown fields and MUST treat unknown enum values per §9 R7. Breaking changes require `/api/v2`. |
+| Open value sets | Response fields whose set of values may grow (verdicts, states, kinds, problem codes, roles, platforms in responses) are declared `type: string` with the known values listed in `x-known-values`, never as a closed `enum`, so generated clients cannot crash on a new value. Request-only fields MAY use `enum`. |
 | Version gate | `426 Upgrade Required` with code `client_too_old` when `PicTunnel-Client: <platform>/<version>` is below `min_client_version`. |
 
 ## 4. Endpoint catalogue (v1, defined in M0)
@@ -319,7 +320,7 @@ A client MAY delete a local original only when, **immediately before** the OS de
 ## 10. Conformance vectors
 
 ### 10.1 Format
-All vector files validate against `vectors.schema.json` (JSON Schema 2020-12). Each file: `{ "schema_version": 1, "kind": "<hashing|server-scenario|client-decision|pairing>", "name": "...", "description": "...", ... }`.
+All vector files validate against `vectors.schema.json` (JSON Schema 2020-12). Each file groups related cases of one kind: `{ "schema_version": 1, "kind": "<hashing|server-scenario|client-decision|pairing>", "description": "...", "cases": [ { "name": "...", ... } ] }`. Minimum counts in §10.2 count cases, not files.
 
 Large inputs are described by deterministic generators instead of committed blobs:
 ```json
@@ -412,7 +413,7 @@ Go: latest stable at M0 start, pinned with `toolchain` in `go.mod`. Flutter: sta
 
 | Risk | Mitigation |
 |---|---|
-| OpenAPI 3.1 support gaps in a generator | Lint for the generator-safe subset; fall back to 3.0.3 output via `redocly bundle` if a generator lags |
+| Generator gaps or quirks | Contract authored in OpenAPI 3.0.3; open value sets as strings; codegen run twice in CI to catch nondeterminism |
 | Java/Docker needed for openapi-generator on Windows | Run generators via Docker in `task gen`; CI is the source of truth |
 | tus semantics not expressible in OpenAPI | Document headers/responses in OpenAPI; behavior lives in `sync-protocol.md` + server-scenario vectors |
 | No local iOS toolchain | All Swift work verified on GitHub macOS runners |
