@@ -67,3 +67,15 @@ tasks:
     cmds:
       - go tool oapi-codegen -config oapi-codegen.yaml ../../../api/openapi.yaml
       - go mod tidy
+
+  gen:ts:
+    desc: Generate TypeScript types for the web viewer
+    cmds:
+      - pnpm --dir web run gen:api
+
+  test:web:
+    desc: Type-check, test and build the web viewer
+    cmds:
+      - pnpm --dir web run check
+      - pnpm --dir web run test
+      - pnpm --dir web run build
