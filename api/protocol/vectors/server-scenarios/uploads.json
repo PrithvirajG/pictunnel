@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "kind": "server-scenario",
+  "description": "tus upload creation, resume, idempotency and finalize verification (sync-protocol.md §7.3-7.4).",
+  "cases": [
+    {
+      "name": "fresh_upload_chunked",
+      "description": "Check reports missing; a bodyless create plus one PATCH uploads the file; the next check reports exists.",
+      "actors": { "device_a": { "user": "alice", "platform": "android" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/sync/check", "json": { "items": [{ "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "size_bytes": 1048576, "local_id": "a-1" }] } },
+          "expect": { "status": 200, "body": { "results": [{ "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "verdict": "missing" }] } }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg", "local_id": "a-1" }
+          },
+          "expect": { "status": 201, "headers": { "Location": "$any" } },
+          "save": { "upload": "header:Location" }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "PATCH", "path": "${upload}",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Offset": "0", "Content-Type": "application/offset+octet-stream" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 1048576 } }
+          },
+          "expect": { "status": 204, "headers": { "Upload-Offset": "1048576", "PicTunnel-Asset-Id": "$uuid", "PicTunnel-Asset-Created": "true" } },
+          "save": { "asset": "header:PicTunnel-Asset-Id" }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/sync/check", "json": { "items": [{ "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "size_bytes": 1048576 }] } },
+          "expect": { "status": 200, "body": { "results": [{ "verdict": "exists", "asset_id": "${asset}", "asset_state": "active" }] } }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "GET", "path": "/api/v1/assets/${asset}" },
+          "expect": { "status": 200, "body": { "id": "${asset}", "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "size_bytes": 1048576, "filename": "IMG_0001.JPG", "kind": "photo", "state": "active" } }
+        }
+      ]
+    },
+    {
+      "name": "creation_with_upload_single_shot",
+      "description": "The whole file in the create request (iOS background profile) finalizes immediately.",
+      "actors": { "device_a": { "user": "alice", "platform": "ios" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.HEIC", "mime": "image/heic" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 1048576 } }
+          },
+          "expect": { "status": 201, "headers": { "Location": "$any", "Upload-Offset": "1048576", "PicTunnel-Asset-Id": "$uuid", "PicTunnel-Asset-Created": "true" } }
+        }
+      ]
+    },
+    {
+      "name": "resume_after_drop",
+      "description": "A connection dropped mid-PATCH resumes from the offset reported by HEAD.",
+      "actors": { "device_a": { "user": "alice", "platform": "android" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "3145728" },
+            "tus_metadata": { "sha256": "f6dd7fec8584ad00219a447071c1fa368a1caee4d9c146083d233713ddccd2c0", "filename": "VID_0001.MP4", "mime": "video/mp4" }
+          },
+          "expect": { "status": 201 },
+          "save": { "upload": "header:Location" }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "PATCH", "path": "${upload}",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Offset": "0", "Content-Type": "application/offset+octet-stream" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 3145728 } }
+          },
+          "transport": { "drop_after_bytes": 1000000 },
+          "expect": { "no_response": true }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "HEAD", "path": "${upload}", "headers": { "Tus-Resumable": "1.0.0" } },
+          "expect": { "status": 200, "headers": { "Upload-Offset": "$int", "Upload-Length": "3145728" } },
+          "save": { "offset": "header:Upload-Offset" }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "PATCH", "path": "${upload}",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Offset": "${offset}", "Content-Type": "application/offset+octet-stream" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 3145728, "start": "${offset}" } }
+          },
+          "expect": { "status": 204, "headers": { "Upload-Offset": "3145728", "PicTunnel-Asset-Id": "$uuid", "PicTunnel-Asset-Created": "true" } }
+        }
+      ]
+    },
+    {
+      "name": "duplicate_post_returns_same_session",
+      "description": "Retrying a create for the same content returns the existing session.",
+      "actors": { "device_a": { "user": "alice", "platform": "android" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg" }
+          },
+          "expect": { "status": 201 },
+          "save": { "first": "header:Location" }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg" }
+          },
+          "expect": { "status": 201, "headers": { "Location": "${first}", "Upload-Offset": "0" } }
+        }
+      ]
+    },
+    {
+      "name": "existing_asset_short_circuit",
+      "description": "Creating an upload for content that already exists resolves to the existing asset without storing bytes.",
+      "actors": { "device_a": { "user": "alice", "platform": "android" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 1048576 } }
+          },
+          "expect": { "status": 201, "headers": { "PicTunnel-Asset-Created": "true" } },
+          "save": { "asset": "header:PicTunnel-Asset-Id" }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001 copy.JPG", "mime": "image/jpeg" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 1048576 } }
+          },
+          "expect": { "status": 201, "headers": { "Upload-Offset": "1048576", "PicTunnel-Asset-Id": "${asset}", "PicTunnel-Asset-Created": "false" } },
+          "save": { "second": "header:Location" }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "HEAD", "path": "${second}", "headers": { "Tus-Resumable": "1.0.0" } },
+          "expect": { "status": 200, "headers": { "Upload-Offset": "1048576", "Upload-Length": "1048576", "PicTunnel-Asset-Id": "${asset}" } }
+        }
+      ]
+    },
+    {
+      "name": "two_devices_same_hash_cooperative",
+      "description": "Two devices of one user upload the same video; the second continues the first's session and both see one asset.",
+      "actors": { "device_a": { "user": "alice", "platform": "android" }, "device_b": { "user": "alice", "platform": "ios" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "3145728" },
+            "tus_metadata": { "sha256": "f6dd7fec8584ad00219a447071c1fa368a1caee4d9c146083d233713ddccd2c0", "filename": "VID_0009.MP4", "mime": "video/mp4", "local_id": "a-9" }
+          },
+          "expect": { "status": 201 },
+          "save": { "upload": "header:Location" }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "PATCH", "path": "${upload}",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Offset": "0", "Content-Type": "application/offset+octet-stream" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 3145728, "start": 0, "end": 1048576 } }
+          },
+          "expect": { "status": 204, "headers": { "Upload-Offset": "1048576" } }
+        },
+        {
+          "actor": "device_b",
+          "request": { "method": "POST", "path": "/api/v1/sync/check", "json": { "items": [{ "sha256": "f6dd7fec8584ad00219a447071c1fa368a1caee4d9c146083d233713ddccd2c0", "size_bytes": 3145728, "local_id": "b-3" }] } },
+          "expect": { "status": 200, "body": { "results": [{ "verdict": "partial", "upload": { "offset": 1048576, "length": 3145728 } }] } }
+        },
+        {
+          "actor": "device_b",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "3145728" },
+            "tus_metadata": { "sha256": "f6dd7fec8584ad00219a447071c1fa368a1caee4d9c146083d233713ddccd2c0", "filename": "IMG_7731.MOV", "mime": "video/mp4", "local_id": "b-3" }
+          },
+          "expect": { "status": 201, "headers": { "Location": "${upload}", "Upload-Offset": "1048576" } }
+        },
+        {
+          "actor": "device_b",
+          "request": {
+            "method": "PATCH", "path": "${upload}",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Offset": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 3145728, "start": 1048576 } }
+          },
+          "expect": { "status": 204, "headers": { "Upload-Offset": "3145728", "PicTunnel-Asset-Id": "$uuid", "PicTunnel-Asset-Created": "true" } },
+          "save": { "asset": "header:PicTunnel-Asset-Id" }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "HEAD", "path": "${upload}", "headers": { "Tus-Resumable": "1.0.0" } },
+          "expect": { "status": 200, "headers": { "Upload-Offset": "3145728", "PicTunnel-Asset-Id": "${asset}" } }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/sync/check", "json": { "items": [{ "sha256": "f6dd7fec8584ad00219a447071c1fa368a1caee4d9c146083d233713ddccd2c0", "size_bytes": 3145728 }] } },
+          "expect": { "status": 200, "body": { "results": [{ "verdict": "exists", "asset_id": "${asset}" }] } }
+        }
+      ]
+    },
+    {
+      "name": "checksum_mismatch_rejects",
+      "description": "Bytes that do not hash to the declared sha256 are rejected and nothing is stored.",
+      "actors": { "device_a": { "user": "alice", "platform": "android" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg" },
+            "body": { "generate": { "pattern": "counter", "seed": 1, "length": 1048576 } }
+          },
+          "expect": { "status": 460, "body": { "code": "checksum_mismatch" } }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/sync/check", "json": { "items": [{ "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "size_bytes": 1048576 }] } },
+          "expect": { "status": 200, "body": { "results": [{ "verdict": "missing" }] } }
+        }
+      ]
+    },
+    {
+      "name": "offset_mismatch_reports_offset",
+      "description": "A PATCH at the wrong offset is rejected with the server's current offset.",
+      "actors": { "device_a": { "user": "alice", "platform": "android" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg" }
+          },
+          "expect": { "status": 201 },
+          "save": { "upload": "header:Location" }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "PATCH", "path": "${upload}",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Offset": "100", "Content-Type": "application/offset+octet-stream" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 1048576, "start": 100 } }
+          },
+          "expect": { "status": 409, "headers": { "Upload-Offset": "0" }, "body": { "code": "offset_mismatch" } }
+        }
+      ]
+    },
+    {
+      "name": "length_mismatch_rejected",
+      "description": "A create for the same hash with a different length is a client bug and is rejected.",
+      "actors": { "device_a": { "user": "alice", "platform": "android" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg" }
+          },
+          "expect": { "status": 201 }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048577" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg" }
+          },
+          "expect": { "status": 409, "body": { "code": "length_mismatch" } }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "kind": "server-scenario",
+  "description": "Trash, purge and tombstones (sync-protocol.md §7.7).",
+  "cases": [
+    {
+      "name": "tombstone_blocks_upload",
+      "description": "Purged content is reported as tombstoned and its upload is refused.",
+      "actors": { "device_a": { "user": "alice", "platform": "android" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 1048576 } }
+          },
+          "expect": { "status": 201 },
+          "save": { "asset": "header:PicTunnel-Asset-Id" }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/assets/trash", "json": { "asset_ids": ["${asset}"] } },
+          "expect": { "status": 200, "body": { "succeeded": ["${asset}"] } }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/assets/purge", "json": { "asset_ids": ["${asset}"] } },
+          "expect": { "status": 200, "body": { "succeeded": ["${asset}"] } }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/sync/check", "json": { "items": [{ "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "size_bytes": 1048576 }] } },
+          "expect": { "status": 200, "body": { "results": [{ "verdict": "tombstoned", "deleted_at": "$datetime" }] } }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 1048576 } }
+          },
+          "expect": { "status": 409, "body": { "code": "tombstoned" } }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "GET", "path": "/api/v1/tombstones" },
+          "expect": { "status": 200, "body": { "tombstones": [{ "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG" }] } }
+        }
+      ]
+    },
+    {
+      "name": "tombstone_override",
+      "description": "Uploading with override_tombstone=1 stores the content again and clears the tombstone.",
+      "actors": { "device_a": { "user": "alice", "platform": "android" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 1048576 } }
+          },
+          "expect": { "status": 201 },
+          "save": { "asset": "header:PicTunnel-Asset-Id" }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/assets/trash", "json": { "asset_ids": ["${asset}"] } },
+          "expect": { "status": 200 }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/assets/purge", "json": { "asset_ids": ["${asset}"] } },
+          "expect": { "status": 200 }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0001.JPG", "mime": "image/jpeg", "override_tombstone": "1" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 1048576 } }
+          },
+          "expect": { "status": 201, "headers": { "PicTunnel-Asset-Id": "$uuid", "PicTunnel-Asset-Created": "true" } },
+          "save": { "asset2": "header:PicTunnel-Asset-Id" }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "GET", "path": "/api/v1/tombstones" },
+          "expect": { "status": 200, "body": { "tombstones": { "$len": 0 } } }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/sync/check", "json": { "items": [{ "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "size_bytes": 1048576 }] } },
+          "expect": { "status": 200, "body": { "results": [{ "verdict": "exists", "asset_id": "${asset2}" }] } }
+        }
+      ]
+    }
+  ]
+}

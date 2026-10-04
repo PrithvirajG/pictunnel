@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "kind": "server-scenario",
+  "description": "Library path assignment and Live Photo pairing (sync-protocol.md §5 H4, §7.5).",
+  "cases": [
+    {
+      "name": "unicode_and_case_collision_paths",
+      "description": "Names differing only by case collide on case-insensitive filesystems; the second gets ~2 and both keep their original UTF-8 names.",
+      "actors": { "device_a": { "user": "alice", "platform": "ios" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "Photo 🙂.JPG", "mime": "image/jpeg", "created_at": "2024-05-06T10:00:00Z" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 1048576 } }
+          },
+          "expect": { "status": 201 }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "18af9b054114c04a1eb836533a3e760dfa9dc53934ecb02fc059ff27150e77fb", "filename": "photo 🙂.jpg", "mime": "image/jpeg", "created_at": "2024-05-06T10:00:00Z" },
+            "body": { "generate": { "pattern": "counter", "seed": 1, "length": 1048576 } }
+          },
+          "expect": { "status": 201 },
+          "save": { "second": "header:PicTunnel-Asset-Id" }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "GET", "path": "/api/v1/assets/${second}" },
+          "expect": { "status": 200, "body": { "filename": "photo 🙂.jpg" } }
+        },
+        {
+          "control": { "assert_library_paths": { "user": "alice", "paths": ["alice/2024/05/Photo 🙂.JPG", "alice/2024/05/photo 🙂~2.jpg"] } }
+        }
+      ]
+    },
+    {
+      "name": "live_video_requires_primary",
+      "description": "A Live Photo video component is rejected until its still exists, then attaches to it.",
+      "actors": { "device_a": { "user": "alice", "platform": "ios" } },
+      "steps": [
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "c11788fa01aebe9ddeadf2d6fd661693d75a0ca28dc957a6042b5ff6d8a08e66", "filename": "IMG_0003.MOV", "mime": "video/quicktime", "pair_role": "live_video", "pair_sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83" },
+            "body": { "generate": { "pattern": "counter", "seed": 2, "length": 1048576 } }
+          },
+          "expect": { "status": 409, "body": { "code": "pair_primary_missing" } }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "filename": "IMG_0003.HEIC", "mime": "image/heic", "pair_role": "primary" },
+            "body": { "generate": { "pattern": "counter", "seed": 0, "length": 1048576 } }
+          },
+          "expect": { "status": 201 },
+          "save": { "asset": "header:PicTunnel-Asset-Id" }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/sync/check", "json": { "items": [{ "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "size_bytes": 1048576 }] } },
+          "expect": { "status": 200, "body": { "results": [{ "verdict": "exists", "has_live_video": false }] } }
+        },
+        {
+          "actor": "device_a",
+          "request": {
+            "method": "POST", "path": "/api/v1/uploads",
+            "headers": { "Tus-Resumable": "1.0.0", "Upload-Length": "1048576", "Content-Type": "application/offset+octet-stream" },
+            "tus_metadata": { "sha256": "c11788fa01aebe9ddeadf2d6fd661693d75a0ca28dc957a6042b5ff6d8a08e66", "filename": "IMG_0003.MOV", "mime": "video/quicktime", "pair_role": "live_video", "pair_sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83" },
+            "body": { "generate": { "pattern": "counter", "seed": 2, "length": 1048576 } }
+          },
+          "expect": { "status": 201, "headers": { "PicTunnel-Asset-Id": "${asset}" } }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "POST", "path": "/api/v1/sync/check", "json": { "items": [{ "sha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", "size_bytes": 1048576 }] } },
+          "expect": { "status": 200, "body": { "results": [{ "verdict": "exists", "has_live_video": true }] } }
+        },
+        {
+          "actor": "device_a",
+          "request": { "method": "GET", "path": "/api/v1/assets/${asset}" },
+          "expect": { "status": 200, "body": { "kind": "live_photo", "live_video": { "sha256": "c11788fa01aebe9ddeadf2d6fd661693d75a0ca28dc957a6042b5ff6d8a08e66" } } }
+        }
+      ]
+    }
+  ]
+}
