@@ -60,3 +60,10 @@ tasks:
     cmds:
       - go vet ./...
       - go test ./...
+
+  gen:go:
+    desc: Generate Go server interfaces and models from the contract
+    dir: server/internal/httpapi
+    cmds:
+      - go tool oapi-codegen -config oapi-codegen.yaml ../../../api/openapi.yaml
+      - go mod tidy
