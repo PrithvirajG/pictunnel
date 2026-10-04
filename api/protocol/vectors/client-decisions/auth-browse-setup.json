@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "kind": "client-decision",
+  "description": "Token refresh, change feed, thumbnails, pairing and first-run setup (sync-protocol.md §6.2, §7.6, §8).",
+  "cases": [
+    { "name": "refresh_token_reused", "given": { "flow": "auth", "last_action": "refresh" }, "server": { "status": 401, "problem": "refresh_token_reused" }, "expect": { "next_state": "Paused", "action": "require_repair", "attempts_delta": 0 } },
+    { "name": "refresh_grace_returns_same_pair", "description": "A concurrent refresh inside the 30 s grace window succeeds; retry the original request.", "given": { "flow": "auth", "last_action": "refresh" }, "server": { "status": 200, "json": { "access_token": "pt_at_example", "access_token_expires_at": "2026-10-03T12:15:00Z", "refresh_token": "pt_rt_example", "refresh_token_expires_at": "2027-01-01T12:00:00Z" } }, "expect": { "action": "retry_original_request", "attempts_delta": 0 } },
+    { "name": "changes_cursor_expired", "given": { "flow": "browse", "last_action": "get_changes" }, "server": { "status": 410, "problem": "cursor_expired" }, "expect": { "action": "run_snapshot", "attempts_delta": 0 } },
+    { "name": "changes_cursor_required", "given": { "flow": "browse", "last_action": "get_changes" }, "server": { "status": 400, "problem": "cursor_required" }, "expect": { "action": "run_snapshot", "attempts_delta": 0 } },
+    { "name": "thumbnail_not_ready", "given": { "flow": "browse", "last_action": "get_thumbnail" }, "server": { "status": 404, "problem": "not_ready" }, "expect": { "action": "retry_later", "attempts_delta": 0 } },
+    { "name": "pairing_code_invalid", "given": { "flow": "pairing", "last_action": "redeem_pairing" }, "server": { "status": 400, "problem": "pairing_code_invalid" }, "expect": { "action": "show_error", "attempts_delta": 0 } },
+    { "name": "setup_already_done", "given": { "flow": "setup", "last_action": "setup" }, "server": { "status": 409, "problem": "setup_already_done" }, "expect": { "action": "go_to_login", "attempts_delta": 0 } }
+  ]
+}
