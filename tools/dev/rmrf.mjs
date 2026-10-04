@@ -1,0 +1,3 @@
+// Portable `rm -rf` for Taskfile commands: node tools/dev/rmrf.mjs <path>...
+import { rmSync } from "node:fs";
+for (const p of process.argv.slice(2)) rmSync(p, { recursive: true, force: true });

@@ -1,0 +1,35 @@
+version: "3"
+
+vars:
+  TOOLS_MODE: '{{.TOOLS_MODE | default "docker"}}'
+  OPENAPI_GENERATOR_IMAGE: openapitools/openapi-generator-cli:v7.24.0
+  GRADLE_IMAGE: gradle:9.3.0-jdk17
+  SWIFT_IMAGE: swift:6.2
+  SWIFT_OPENAPI_GENERATOR_VERSION: 1.13.0
+  FLUTTER_VERSION:
+    sh: node tools/dev/read-version.mjs mobile/.flutter-version stable
+  DART_IMAGE:
+    sh: node tools/dev/read-version.mjs tools/dev/dart-image.txt dart:stable
+  DOCKER_USER:
+    sh: node tools/dev/docker-user.mjs
+  DOCKER_RUN: docker run --rm {{.DOCKER_USER}} -e HOME=/tmp -v "{{.ROOT_DIR}}:/repo" -w /repo
+
+tasks:
+  doctor:
+    desc: Verify required local tools are installed
+    cmds:
+      - go version
+      - node --version
+      - pnpm --version
+      - uv --version
+      - docker version
+
+  check:eol:
+    desc: Fail if a text file is committed with CRLF line endings
+    cmds:
+      - node tools/ci/check-eol.mjs
+
+  test:tools:
+    desc: Tests for repository check scripts
+    cmds:
+      - node --test "tools/ci/*.test.mjs"
