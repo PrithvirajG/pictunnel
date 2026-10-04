@@ -144,3 +144,10 @@ tasks:
     cmds:
       - >-
         {{if eq .TOOLS_MODE "native"}}cd mobile && flutter pub get && flutter analyze && flutter test{{else}}{{.DOCKER_RUN}} -w /repo/mobile ghcr.io/cirruslabs/flutter:{{.FLUTTER_VERSION}} bash -c "flutter pub get && flutter analyze && flutter test"{{end}}
+
+  test:ml:
+    desc: Lint and test the ML worker
+    cmds:
+      - uv sync --project ml
+      - uv run --project ml ruff check ml
+      - uv run --project ml pytest ml
