@@ -276,8 +276,247 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
-  # @paths-sync
-  # @paths-uploads
+  /api/v1/sync/check:
+    post:
+      operationId: checkContent
+      summary: Batch content check by SHA-256
+      description: Read-only except for linking `(device, local_id)` to existing assets. See sync-protocol.md §7.2.
+      tags: [sync, engine]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckRequest"
+      responses:
+        "200":
+          description: One result per requested item, in request order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/sync/changes:
+    get:
+      operationId: getChanges
+      summary: Delta change feed since a cursor
+      description: "Calling without `cursor` returns 400 `cursor_required`; run a snapshot first. Cursors older than 90 days return 410 `cursor_expired`."
+      tags: [sync]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Changes in sequence order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangesPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /api/v1/sync/snapshot:
+    get:
+      operationId: getSnapshot
+      summary: Full metadata snapshot, paged
+      description: The first page carries `cursor` (change-log head at snapshot start). After the last page continue with `getChanges` from that cursor.
+      tags: [sync]
+      parameters:
+        - $ref: "#/components/parameters/PageToken"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of assets ordered by id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/uploads:
+    options:
+      operationId: optionsUploads
+      summary: tus capability discovery
+      tags: [uploads, engine]
+      security: []
+      responses:
+        "204":
+          description: Supported tus version, extensions and limits.
+          headers:
+            Tus-Resumable:
+              $ref: "#/components/headers/TusResumable"
+            Tus-Version:
+              schema:
+                type: string
+                example: 1.0.0
+            Tus-Extension:
+              schema:
+                type: string
+                example: creation,creation-with-upload,termination,expiration,checksum
+            Tus-Max-Size:
+              schema:
+                type: integer
+                format: int64
+            Tus-Checksum-Algorithm:
+              schema:
+                type: string
+                example: sha256
+    post:
+      operationId: createUpload
+      summary: Create an upload, optionally sending bytes in the same request
+      description: Idempotent per `(owner, sha256)`. Outcomes and their precedence are defined in sync-protocol.md §7.3.
+      tags: [uploads, engine]
+      parameters:
+        - $ref: "#/components/parameters/TusResumable"
+        - $ref: "#/components/parameters/UploadLength"
+        - $ref: "#/components/parameters/UploadMetadata"
+        - $ref: "#/components/parameters/UploadChecksum"
+      requestBody:
+        required: false
+        content:
+          application/offset+octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Upload session created, resumed, or resolved to an existing asset.
+          headers:
+            Tus-Resumable:
+              $ref: "#/components/headers/TusResumable"
+            Location:
+              $ref: "#/components/headers/Location"
+            Upload-Offset:
+              $ref: "#/components/headers/UploadOffset"
+            Upload-Expires:
+              $ref: "#/components/headers/UploadExpires"
+            PicTunnel-Asset-Id:
+              $ref: "#/components/headers/AssetId"
+            PicTunnel-Asset-Created:
+              $ref: "#/components/headers/AssetCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "460":
+          $ref: "#/components/responses/ChecksumMismatch"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "507":
+          $ref: "#/components/responses/InsufficientStorage"
+  /api/v1/uploads/{upload_id}:
+    parameters:
+      - $ref: "#/components/parameters/UploadId"
+    head:
+      operationId: getUploadOffset
+      summary: Current offset of an upload
+      tags: [uploads, engine]
+      responses:
+        "200":
+          description: Upload state. `PicTunnel-Asset-Id` is present once finalized.
+          headers:
+            Tus-Resumable:
+              $ref: "#/components/headers/TusResumable"
+            Upload-Offset:
+              $ref: "#/components/headers/UploadOffset"
+            Upload-Length:
+              $ref: "#/components/headers/UploadLength"
+            Upload-Expires:
+              $ref: "#/components/headers/UploadExpires"
+            PicTunnel-Asset-Id:
+              $ref: "#/components/headers/AssetId"
+        "401":
+          description: Missing or invalid credentials.
+        "404":
+          description: Unknown or expired upload; restart with createUpload.
+    patch:
+      operationId: appendUpload
+      summary: Append bytes at the current offset
+      description: The request that completes the upload runs finalize (sync-protocol.md §7.4) before responding.
+      tags: [uploads, engine]
+      parameters:
+        - $ref: "#/components/parameters/TusResumable"
+        - $ref: "#/components/parameters/UploadOffset"
+        - $ref: "#/components/parameters/UploadChecksum"
+      requestBody:
+        required: true
+        content:
+          application/offset+octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "204":
+          description: Bytes accepted. Asset headers are present when this request finalized the upload.
+          headers:
+            Tus-Resumable:
+              $ref: "#/components/headers/TusResumable"
+            Upload-Offset:
+              $ref: "#/components/headers/UploadOffset"
+            PicTunnel-Asset-Id:
+              $ref: "#/components/headers/AssetId"
+            PicTunnel-Asset-Created:
+              $ref: "#/components/headers/AssetCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "`offset_mismatch`: the request's Upload-Offset differs from the server's. The current offset is returned."
+          headers:
+            Upload-Offset:
+              $ref: "#/components/headers/UploadOffset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "423":
+          $ref: "#/components/responses/Locked"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "460":
+          $ref: "#/components/responses/ChecksumMismatch"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "507":
+          $ref: "#/components/responses/InsufficientStorage"
+    delete:
+      operationId: terminateUpload
+      summary: Abandon an upload and delete its staged bytes
+      tags: [uploads, engine]
+      parameters:
+        - $ref: "#/components/parameters/TusResumable"
+      responses:
+        "204":
+          description: Terminated.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   # @paths-assets
 components:
   securitySchemes:
@@ -802,5 +1041,208 @@ components:
           type: string
           minLength: 1
           maxLength: 100
-    # @schemas-sync
+    CheckItem:
+      type: object
+      required: [sha256, size_bytes]
+      properties:
+        sha256:
+          $ref: "#/components/schemas/Sha256"
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        local_id:
+          type: string
+          maxLength: 512
+          description: Device-local identifier; linked to the asset when the verdict is `exists`.
+        confirm_on_disk:
+          type: boolean
+          default: false
+          description: Ask the server to stat the original and report `on_disk` (used before freeing space).
+    CheckRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/CheckItem"
+    UploadRef:
+      type: object
+      required: [id, url, offset, length, expires_at]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+          example: /api/v1/uploads/01928f40-1111-7aaa-8bbb-0123456789ab
+        offset:
+          type: integer
+          format: int64
+        length:
+          type: integer
+          format: int64
+        expires_at:
+          type: string
+          format: date-time
+    CheckResult:
+      type: object
+      required: [sha256, verdict]
+      properties:
+        sha256:
+          $ref: "#/components/schemas/Sha256"
+        verdict:
+          type: string
+          x-known-values: [exists, missing, partial, tombstoned]
+        asset_id:
+          type: string
+          format: uuid
+        asset_state:
+          type: string
+          x-known-values: [active, trashed]
+        has_live_video:
+          type: boolean
+        on_disk:
+          type: boolean
+        upload:
+          $ref: "#/components/schemas/UploadRef"
+        deleted_at:
+          type: string
+          format: date-time
+    CheckResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/CheckResult"
+    LiveVideo:
+      type: object
+      required: [sha256, size_bytes, mime]
+      properties:
+        sha256:
+          $ref: "#/components/schemas/Sha256"
+        size_bytes:
+          type: integer
+          format: int64
+        mime:
+          type: string
+          example: video/quicktime
+    Asset:
+      type: object
+      required: [id, sha256, size_bytes, mime, kind, filename, taken_at_source, state, thumbnails_ready, created_at, updated_seq]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sha256:
+          $ref: "#/components/schemas/Sha256"
+        size_bytes:
+          type: integer
+          format: int64
+        mime:
+          type: string
+          example: image/heic
+        kind:
+          type: string
+          x-known-values: [photo, video, live_photo]
+        filename:
+          type: string
+          example: IMG_0042.HEIC
+        taken_at:
+          type: string
+          format: date-time
+          nullable: true
+        taken_at_offset_minutes:
+          type: integer
+          nullable: true
+        taken_at_source:
+          type: string
+          x-known-values: [exif, container, client, file, unknown]
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+        duration_ms:
+          type: integer
+          format: int64
+          nullable: true
+        lat:
+          type: number
+          format: double
+          nullable: true
+        lon:
+          type: number
+          format: double
+          nullable: true
+        state:
+          type: string
+          x-known-values: [active, trashed]
+        trashed_at:
+          type: string
+          format: date-time
+          nullable: true
+        stack_id:
+          type: string
+          format: uuid
+          nullable: true
+        live_video:
+          $ref: "#/components/schemas/LiveVideo"
+        thumbnails_ready:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_seq:
+          type: integer
+          format: int64
+    ChangeEntry:
+      type: object
+      required: [seq, kind]
+      properties:
+        seq:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          x-known-values: [asset.upsert, asset.removed]
+        asset:
+          $ref: "#/components/schemas/Asset"
+        asset_id:
+          type: string
+          format: uuid
+          description: Present for `asset.removed`.
+    ChangesPage:
+      type: object
+      required: [changes, next_cursor, has_more]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangeEntry"
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+    SnapshotPage:
+      type: object
+      required: [assets, has_more]
+      properties:
+        cursor:
+          type: string
+          description: Present on the first page only. Continue with getChanges from here after the last page.
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+        next_page_token:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
     # @schemas-assets
