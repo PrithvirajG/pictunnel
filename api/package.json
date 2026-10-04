@@ -1,0 +1,24 @@
+{
+  "name": "pictunnel-api-tooling",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "lint": "redocly lint pictunnel@v1 && node tools/contract-rules.mjs openapi.yaml",
+    "bundle:engine": "redocly bundle engine@v1 --remove-unused-components -o build/engine-openapi.yaml && node tools/check-engine-bundle.mjs build/engine-openapi.yaml",
+    "vectors": "node tools/validate-vectors.mjs",
+    "test": "node --test \"tools/*.test.mjs\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.34.6",
+  "devDependencies": {
+    "@redocly/cli": "^2.57.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "yaml": "^2.9.1"
+  }
+}

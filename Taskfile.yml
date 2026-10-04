@@ -33,3 +33,18 @@ tasks:
     desc: Tests for repository check scripts
     cmds:
       - node --test "tools/ci/*.test.mjs"
+
+  api:install:
+    desc: Install API tooling dependencies
+    cmds:
+      - pnpm --dir api install --frozen-lockfile
+
+  lint:api:
+    desc: Lint the OpenAPI contract (Redocly + project rules)
+    cmds:
+      - pnpm --dir api run lint
+
+  test:api:
+    desc: Unit tests for API tooling
+    cmds:
+      - pnpm --dir api run test

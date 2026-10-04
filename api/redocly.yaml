@@ -1,0 +1,17 @@
+apis:
+  pictunnel@v1:
+    root: openapi.yaml
+  engine@v1:
+    root: openapi.yaml
+    decorators:
+      filter-in:
+        property: tags
+        value: engine
+        matchStrategy: any
+extends:
+  - recommended
+rules:
+  operation-operationId: error
+  operation-summary: error
+  operation-tag-defined: error
+  security-defined: error
