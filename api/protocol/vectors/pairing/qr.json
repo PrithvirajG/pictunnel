@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "kind": "pairing",
+  "description": "QR pairing URI parsing and certificate pinning decisions (sync-protocol.md §6.3).",
+  "cases": [
+    {
+      "name": "valid_two_endpoints",
+      "uri": "pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=K7Q2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2F192.168.1.20%3A8443&u=https%3A%2F%2Fphotos.example.com",
+      "expect": {
+        "parse": "ok",
+        "server_id": "01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f",
+        "code": "K7Q2-M9XD-4T",
+        "fingerprint": "xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc",
+        "endpoints": ["https://192.168.1.20:8443", "https://photos.example.com"]
+      }
+    },
+    {
+      "name": "missing_fingerprint",
+      "uri": "pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=K7Q2-M9XD-4T&u=https%3A%2F%2F192.168.1.20%3A8443",
+      "expect": { "parse": "error", "error": "missing_fingerprint" }
+    },
+    {
+      "name": "unsupported_version",
+      "uri": "pictunnel://pair?v=2&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=K7Q2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2F192.168.1.20%3A8443",
+      "expect": { "parse": "error", "error": "unsupported_version" }
+    },
+    {
+      "name": "malformed_code",
+      "description": "Contains the letter I, which Crockford base32 excludes.",
+      "uri": "pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=KIQ2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2F192.168.1.20%3A8443",
+      "expect": { "parse": "error", "error": "invalid_code" }
+    },
+    {
+      "name": "missing_server_id",
+      "uri": "pictunnel://pair?v=1&code=K7Q2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2F192.168.1.20%3A8443",
+      "expect": { "parse": "error", "error": "missing_server_id" }
+    },
+    {
+      "name": "no_endpoints",
+      "uri": "pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=K7Q2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc",
+      "expect": { "parse": "error", "error": "missing_endpoint" }
+    },
+    {
+      "name": "insecure_endpoint",
+      "uri": "pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=K7Q2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=http%3A%2F%2F192.168.1.20%3A8080",
+      "expect": { "parse": "error", "error": "insecure_endpoint" }
+    },
+    {
+      "name": "wrong_scheme",
+      "uri": "https://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=K7Q2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2F192.168.1.20%3A8443",
+      "expect": { "parse": "error", "error": "invalid_scheme" }
+    },
+    {
+      "name": "duplicate_endpoints_deduplicated",
+      "uri": "pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=K7Q2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2F192.168.1.20%3A8443&u=https%3A%2F%2Fphotos.example.com&u=https%3A%2F%2F192.168.1.20%3A8443",
+      "expect": { "parse": "ok", "endpoints": ["https://192.168.1.20:8443", "https://photos.example.com"] }
+    },
+    {
+      "name": "pin_match_self_signed",
+      "uri": "pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=K7Q2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2F192.168.1.20%3A8443",
+      "connection": { "endpoint": "https://192.168.1.20:8443", "system_trusted": false, "spki_sha256": "xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc" },
+      "expect": { "parse": "ok", "accept_connection": true }
+    },
+    {
+      "name": "pin_mismatch_self_signed",
+      "uri": "pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=K7Q2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2F192.168.1.20%3A8443",
+      "connection": { "endpoint": "https://192.168.1.20:8443", "system_trusted": false, "spki_sha256": "z0pEXVjYOhc0CN5i-OUFDhR6-JaPwKtubUrYBPzrVy4" },
+      "expect": { "parse": "ok", "accept_connection": false }
+    },
+    {
+      "name": "public_ca_endpoint_accepted",
+      "description": "A reverse proxy with a publicly trusted certificate is accepted even though its key differs from fp.",
+      "uri": "pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=K7Q2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2Fphotos.example.com",
+      "connection": { "endpoint": "https://photos.example.com", "system_trusted": true, "spki_sha256": "Hb2lReT4Ad1PYf3e03tI4L2OhxWfypH885LfrVnAcb4" },
+      "expect": { "parse": "ok", "accept_connection": true }
+    }
+  ]
+}
