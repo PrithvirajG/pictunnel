@@ -102,3 +102,25 @@ tasks:
     cmds:
       - >-
         {{if eq .TOOLS_MODE "native"}}cd mobile/android/engine-api && ./gradlew test --no-daemon{{else}}{{.DOCKER_RUN}} -w /repo/mobile/android/engine-api -e GRADLE_USER_HOME=/tmp/gradle {{.GRADLE_IMAGE}} gradle test --no-daemon{{end}}
+
+  gen:swift:
+    desc: Generate the Swift engine client from the engine subset (swift-openapi-generator in Docker)
+    deps: [gen:engine-bundle]
+    vars:
+      GEN_DIR: /repo/.cache/swift-openapi-generator-{{.SWIFT_OPENAPI_GENERATOR_VERSION}}
+    cmds:
+      - node tools/dev/rmrf.mjs mobile/ios/EngineAPI/Sources/EngineAPI/Generated
+      - >-
+        {{.DOCKER_RUN}} {{.SWIFT_IMAGE}} bash -c "
+        mkdir -p /repo/mobile/ios/EngineAPI/Sources/EngineAPI/Generated &&
+        (test -d {{.GEN_DIR}} || git clone --depth 1 --branch {{.SWIFT_OPENAPI_GENERATOR_VERSION}} https://github.com/apple/swift-openapi-generator {{.GEN_DIR}}) &&
+        swift run -j 1 --package-path {{.GEN_DIR}} -c release swift-openapi-generator generate
+        --config /repo/mobile/ios/EngineAPI/openapi-generator-config.yaml
+        --output-directory /repo/mobile/ios/EngineAPI/Sources/EngineAPI/Generated
+        /repo/api/build/engine-openapi.yaml"
+
+  test:swift:
+    desc: Build the Swift engine client and run its vector tests
+    cmds:
+      - >-
+        {{if eq .TOOLS_MODE "native"}}swift test -j 1 --package-path mobile/ios/EngineAPI{{else}}{{.DOCKER_RUN}} {{.SWIFT_IMAGE}} swift test -j 1 --package-path /repo/mobile/ios/EngineAPI --scratch-path /repo/.cache/engineapi-build{{end}}
