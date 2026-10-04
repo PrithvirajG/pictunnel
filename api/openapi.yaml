@@ -517,7 +517,245 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
-  # @paths-assets
+  /api/v1/assets/{asset_id}:
+    parameters:
+      - $ref: "#/components/parameters/AssetId"
+    get:
+      operationId: getAsset
+      summary: Asset metadata
+      tags: [assets]
+      responses:
+        "200":
+          description: The asset.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/assets/{asset_id}/thumbnail:
+    parameters:
+      - $ref: "#/components/parameters/AssetId"
+    get:
+      operationId: getAssetThumbnail
+      summary: JPEG thumbnail or preview
+      tags: [assets]
+      parameters:
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [thumb, preview]
+            default: thumb
+      responses:
+        "200":
+          description: "`thumb` is 320 px on the long edge, `preview` is 1440 px."
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/assets/{asset_id}/original:
+    parameters:
+      - $ref: "#/components/parameters/AssetId"
+    get:
+      operationId: getAssetOriginal
+      summary: Original bytes, with Range support
+      tags: [assets]
+      parameters:
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200":
+          description: Whole file.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Accept-Ranges:
+              schema:
+                type: string
+                example: bytes
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Requested byte range.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Content-Range:
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "416":
+          $ref: "#/components/responses/RangeNotSatisfiable"
+  /api/v1/assets/{asset_id}/playback:
+    parameters:
+      - $ref: "#/components/parameters/AssetId"
+    get:
+      operationId: getAssetPlayback
+      summary: Browser-playable video (original or H.264 transcode)
+      tags: [assets]
+      parameters:
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200":
+          description: Whole video.
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Requested byte range.
+          headers:
+            Content-Range:
+              schema:
+                type: string
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "416":
+          $ref: "#/components/responses/RangeNotSatisfiable"
+  /api/v1/assets/trash:
+    post:
+      operationId: trashAssets
+      summary: Move assets to the trash
+      tags: [assets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetIdList"
+      responses:
+        "200":
+          description: Per-asset outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/assets/restore:
+    post:
+      operationId: restoreAssets
+      summary: Restore assets from the trash
+      tags: [assets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetIdList"
+      responses:
+        "200":
+          description: Per-asset outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/assets/purge:
+    post:
+      operationId: purgeAssets
+      summary: Permanently delete trashed assets and record tombstones
+      tags: [assets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetIdList"
+      responses:
+        "200":
+          description: Per-asset outcome. Assets that are not trashed fail with `not_trashed`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/trash/empty:
+    post:
+      operationId: emptyTrash
+      summary: Purge every trashed asset of the caller
+      tags: [assets]
+      responses:
+        "200":
+          description: Number of purged assets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmptyTrashResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/tombstones:
+    get:
+      operationId: listTombstones
+      summary: Content the caller deliberately purged
+      tags: [assets]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Tombstones, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TombstonePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/tombstones/{sha256}:
+    parameters:
+      - $ref: "#/components/parameters/Sha256Path"
+    delete:
+      operationId: deleteTombstone
+      summary: Remove a tombstone so the content can be backed up again
+      tags: [assets, engine]
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
   securitySchemes:
     bearerAuth:
@@ -1245,4 +1483,67 @@ components:
           nullable: true
         has_more:
           type: boolean
-    # @schemas-assets
+    AssetIdList:
+      type: object
+      required: [asset_ids]
+      properties:
+        asset_ids:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: string
+            format: uuid
+    BulkFailure:
+      type: object
+      required: [asset_id, code]
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          x-known-values: [not_found, not_trashed]
+    BulkResult:
+      type: object
+      required: [succeeded, failed]
+      properties:
+        succeeded:
+          type: array
+          items:
+            type: string
+            format: uuid
+        failed:
+          type: array
+          items:
+            $ref: "#/components/schemas/BulkFailure"
+    EmptyTrashResult:
+      type: object
+      required: [purged_count]
+      properties:
+        purged_count:
+          type: integer
+    Tombstone:
+      type: object
+      required: [sha256, filename, deleted_at]
+      properties:
+        sha256:
+          $ref: "#/components/schemas/Sha256"
+        filename:
+          type: string
+        deleted_at:
+          type: string
+          format: date-time
+    TombstonePage:
+      type: object
+      required: [tombstones, has_more]
+      properties:
+        tombstones:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tombstone"
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
