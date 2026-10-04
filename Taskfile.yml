@@ -48,3 +48,8 @@ tasks:
     desc: Unit tests for API tooling
     cmds:
       - pnpm --dir api run test
+
+  vectors:validate:
+    desc: Validate conformance vectors (schema, semantics, minimum counts)
+    cmds:
+      - pnpm --dir api run vectors

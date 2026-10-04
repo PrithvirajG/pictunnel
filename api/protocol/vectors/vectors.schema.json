@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pictunnel:vectors:v1",
+  "title": "PicTunnel conformance vector file",
+  "description": "Runner and matcher semantics are defined in api/protocol/sync-protocol.md, section 'Conformance vectors'.",
+  "type": "object",
+  "required": ["schema_version", "kind", "description", "cases"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "enum": ["hashing", "server-scenario", "client-decision", "pairing"] },
+    "description": { "type": "string", "minLength": 1 },
+    "cases": { "type": "array", "minItems": 1 }
+  },
+  "allOf": [
+    { "if": { "properties": { "kind": { "const": "hashing" } } }, "then": { "properties": { "cases": { "items": { "$ref": "#/$defs/hashing_case" } } } } },
+    { "if": { "properties": { "kind": { "const": "pairing" } } }, "then": { "properties": { "cases": { "items": { "$ref": "#/$defs/pairing_case" } } } } },
+    { "if": { "properties": { "kind": { "const": "server-scenario" } } }, "then": { "properties": { "cases": { "items": { "$ref": "#/$defs/server_scenario_case" } } } } },
+    { "if": { "properties": { "kind": { "const": "client-decision" } } }, "then": { "properties": { "cases": { "items": { "$ref": "#/$defs/client_decision_case" } } } } }
+  ],
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[a-z0-9]+(_[a-z0-9]+)*$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "var_ref": { "type": "string", "pattern": "^\\$\\{[a-z0-9_]+\\}$" },
+    "generate": {
+      "type": "object",
+      "required": ["pattern", "length"],
+      "additionalProperties": false,
+      "properties": {
+        "pattern": { "const": "counter" },
+        "seed": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "length": { "type": "integer", "minimum": 0 },
+        "start": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/var_ref" }] },
+        "end": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/var_ref" }] }
+      }
+    },
+    "hashing_case": {
+      "type": "object",
+      "required": ["name", "input", "expected_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "description": { "type": "string" },
+        "input": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "file": { "type": "string", "pattern": "^fixtures/[A-Za-z0-9._-]+$" },
+            "inline_utf8": { "type": "string" },
+            "generate": { "$ref": "#/$defs/generate" }
+          }
+        },
+        "expected_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "pairing_case": {
+      "type": "object",
+      "required": ["name", "uri", "expect"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "description": { "type": "string" },
+        "uri": { "type": "string" },
+        "connection": {
+          "type": "object",
+          "required": ["endpoint", "system_trusted", "spki_sha256"],
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": { "type": "string" },
+            "system_trusted": { "type": "boolean" },
+            "spki_sha256": { "type": "string" }
+          }
+        },
+        "expect": {
+          "type": "object",
+          "required": ["parse"],
+          "additionalProperties": false,
+          "properties": {
+            "parse": { "enum": ["ok", "error"] },
+            "error": { "enum": ["invalid_scheme", "unsupported_version", "missing_server_id", "invalid_code", "missing_fingerprint", "missing_endpoint", "insecure_endpoint"] },
+            "server_id": { "type": "string" },
+            "code": { "type": "string" },
+            "fingerprint": { "type": "string" },
+            "endpoints": { "type": "array", "items": { "type": "string" } },
+            "accept_connection": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "server_scenario_case": {
+      "type": "object",
+      "required": ["name", "actors", "steps"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "description": { "type": "string" },
+        "actors": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/name" },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["user"],
+            "additionalProperties": false,
+            "properties": {
+              "user": { "type": "string" },
+              "platform": { "enum": ["android", "ios", "web", "other"] }
+            }
+          }
+        },
+        "steps": { "type": "array", "minItems": 1, "items": { "oneOf": [{ "$ref": "#/$defs/http_step" }, { "$ref": "#/$defs/control_step" }] } }
+      }
+    },
+    "http_step": {
+      "type": "object",
+      "required": ["actor", "request", "expect"],
+      "additionalProperties": false,
+      "properties": {
+        "actor": { "type": "string" },
+        "request": {
+          "type": "object",
+          "required": ["method", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "method": { "enum": ["GET", "POST", "PATCH", "HEAD", "DELETE", "OPTIONS"] },
+            "path": { "type": "string" },
+            "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+            "json": {},
+            "tus_metadata": { "type": "object", "additionalProperties": { "type": "string" } },
+            "body": {
+              "type": "object",
+              "required": ["generate"],
+              "additionalProperties": false,
+              "properties": { "generate": { "$ref": "#/$defs/generate" } }
+            }
+          }
+        },
+        "transport": {
+          "type": "object",
+          "required": ["drop_after_bytes"],
+          "additionalProperties": false,
+          "properties": { "drop_after_bytes": { "type": "integer", "minimum": 0 } }
+        },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+            "no_response": { "const": true },
+            "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+            "body": {}
+          },
+          "oneOf": [{ "required": ["status"] }, { "required": ["no_response"] }]
+        },
+        "save": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/name" },
+          "additionalProperties": { "type": "string", "pattern": "^(header:[A-Za-z0-9-]+|body:(/[^/]*)+)$" }
+        }
+      }
+    },
+    "control_step": {
+      "type": "object",
+      "required": ["control"],
+      "additionalProperties": false,
+      "properties": {
+        "control": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "advance_clock_seconds": { "type": "integer", "minimum": 1 },
+            "run_job": { "enum": ["compact_change_log", "expire_uploads", "purge_trash"] },
+            "assert_library_paths": {
+              "type": "object",
+              "required": ["user", "paths"],
+              "additionalProperties": false,
+              "properties": {
+                "user": { "type": "string" },
+                "paths": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "assert_asset_sources": {
+              "type": "object",
+              "required": ["asset", "sources"],
+              "additionalProperties": false,
+              "properties": {
+                "asset": { "type": "string" },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["actor", "local_id"],
+                    "additionalProperties": false,
+                    "properties": { "actor": { "type": "string" }, "local_id": { "type": "string" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "item_state": { "enum": ["Discovered", "Hashed", "Queued", "Uploading", "Verifying", "BackedUp", "Skipped", "Freed", "NeedsAttention", "Paused"] },
+    "client_decision_case": {
+      "type": "object",
+      "required": ["name", "given", "server", "expect"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "description": { "type": "string" },
+        "given": {
+          "type": "object",
+          "required": ["flow", "last_action"],
+          "additionalProperties": false,
+          "properties": {
+            "flow": { "enum": ["backup", "auth", "browse", "pairing", "setup", "free_up_space"] },
+            "item_state": { "$ref": "#/$defs/item_state" },
+            "last_action": { "enum": ["check", "create_upload", "append_upload", "head_upload", "refresh", "get_changes", "get_thumbnail", "redeem_pairing", "setup", "free_up_space_check"] },
+            "item": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": { "enum": ["photo", "video", "live_photo"] },
+                "attempts": { "type": "integer", "minimum": 0 },
+                "has_upload_id": { "type": "boolean" },
+                "fingerprint_changed": { "type": "boolean" }
+              }
+            }
+          }
+        },
+        "server": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+            "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+            "json": {},
+            "problem": { "type": "string" },
+            "transport": { "enum": ["timeout", "reset", "offline"] }
+          },
+          "oneOf": [{ "required": ["status"] }, { "required": ["transport"] }]
+        },
+        "expect": {
+          "type": "object",
+          "required": ["action"],
+          "additionalProperties": false,
+          "properties": {
+            "next_state": { "$ref": "#/$defs/item_state" },
+            "action": {
+              "enum": [
+                "mark_backed_up", "queue_upload", "resume_upload", "head_then_resume", "restart_upload",
+                "mark_skipped", "rehash_and_requeue", "backoff_retry", "wait_retry_after", "wait_for_network",
+                "refresh_then_retry", "retry_original_request", "require_repair", "pause_all_uploads", "notify_quota",
+                "prompt_update", "mark_needs_attention", "run_snapshot", "retry_later", "skip_this_run",
+                "upload_primary_first", "upload_live_video", "check_then_resolve", "delete_local_allowed",
+                "delete_local_denied", "show_error", "go_to_login"
+              ]
+            },
+            "attempts_delta": { "type": "integer", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    }
+  }
+}
