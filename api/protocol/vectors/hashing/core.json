@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "kind": "hashing",
+  "description": "Generated inputs around chunk boundaries. Counter pattern: byte i = (i + seed) mod 256.",
+  "cases": [
+    { "name": "abc_inline", "description": "FIPS 180-2 test vector.", "input": { "inline_utf8": "abc" }, "expected_sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" },
+    { "name": "empty", "description": "Zero-length file.", "input": { "generate": { "pattern": "counter", "length": 0 } }, "expected_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+    { "name": "one_byte", "description": "Single 0x00 byte.", "input": { "generate": { "pattern": "counter", "length": 1 } }, "expected_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d" },
+    { "name": "counter_255", "input": { "generate": { "pattern": "counter", "length": 255 } }, "expected_sha256": "3f8591112c6bbe5c963965954e293108b7208ed2af893e500d859368c654eabe" },
+    { "name": "counter_256", "input": { "generate": { "pattern": "counter", "length": 256 } }, "expected_sha256": "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880" },
+    { "name": "chunk_8mib", "description": "Exactly one default chunk.", "input": { "generate": { "pattern": "counter", "length": 8388608 } }, "expected_sha256": "7d212b9c884f5c77896de960ae17cc341cda43b14d6a971f34ca29ebd4badf7f" },
+    { "name": "chunk_8mib_plus_1", "description": "One byte past a chunk boundary.", "input": { "generate": { "pattern": "counter", "length": 8388609 } }, "expected_sha256": "241ca9a8e51ef578c06db1c5ed27d8018eb6515d3427ca9b9a84d5e93bcce2ae" },
+    { "name": "large_64mib_plus_1", "description": "One byte past the iOS background chunk size.", "input": { "generate": { "pattern": "counter", "length": 67108865 } }, "expected_sha256": "1c59ac3e75dad72b9911b18b7b02db7e848c6d8f04946284be2311f94a1f6a2f" }
+  ]
+}

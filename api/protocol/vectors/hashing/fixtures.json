@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "kind": "hashing",
+  "description": "Hashes of small real media files.",
+  "cases": [
+    {
+      "name": "fixture_tiny_jpg",
+      "description": "Real JPG file (748 bytes), dated 2024-05-06T10:00:00Z.",
+      "input": {
+        "file": "fixtures/tiny.jpg"
+      },
+      "expected_sha256": "dd493b5746dfbd5583c11594bf7724c30fc9a4953a575967d331a277c92af9a6"
+    },
+    {
+      "name": "fixture_tiny_heic",
+      "description": "Real HEIC file (506 bytes), dated 2024-05-06T10:00:00Z.",
+      "input": {
+        "file": "fixtures/tiny.heic"
+      },
+      "expected_sha256": "2e591dc48967d50e4da0941454b91b53cf2213a11bbe2a74eb6c6365c5dedef7"
+    },
+    {
+      "name": "fixture_tiny_mp4",
+      "description": "Real MP4 file (2109 bytes), dated 2024-05-06T10:00:00Z.",
+      "input": {
+        "file": "fixtures/tiny.mp4"
+      },
+      "expected_sha256": "109fe357e8ec3bebc813e37efe1361fdc95a2a4f901399fdb43de8815a8411fd"
+    }
+  ]
+}
