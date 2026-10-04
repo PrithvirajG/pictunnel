@@ -1,0 +1,451 @@
+openapi: 3.0.3
+info:
+  title: PicTunnel API
+  version: 1.0.0
+  description: |
+    Wire contract for the PicTunnel server, API version 1.
+
+    * Normative sync behavior is specified in `protocol/sync-protocol.md`.
+    * Errors are RFC 9457 problem details (`application/problem+json`) with a stable `code`.
+    * Response fields whose value set may grow are strings; their known values are listed
+      in `x-known-values`. Clients must tolerate values they do not know.
+    * Apps send `PicTunnel-Client: <platform>/<version>`. Below `min_client_version` the
+      server answers `426` with code `client_too_old`.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: https://{host}:{port}
+    description: A PicTunnel server reached over the LAN or a user-supplied remote URL.
+    variables:
+      host:
+        default: localhost
+      port:
+        default: "8443"
+tags:
+  - name: server
+    description: Server identity and health.
+  - name: auth
+    description: First-run setup, login, token refresh and logout.
+  - name: pairing
+    description: One-time codes that pair a device with an account.
+  - name: devices
+    description: Devices paired with the caller's account.
+  - name: sync
+    description: Content check, change feed and snapshot.
+  - name: uploads
+    description: Resumable uploads (tus 1.0.0 profile, see sync-protocol.md).
+  - name: assets
+    description: Asset metadata, media, trash and tombstones.
+  - name: engine
+    description: Operations used by the native backup engines; generated for Kotlin and Swift.
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      summary: Liveness probe
+      tags: [server]
+      security: []
+      responses:
+        "200":
+          description: The process is running.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /readyz:
+    get:
+      operationId: getReadyz
+      summary: Readiness probe
+      tags: [server]
+      security: []
+      responses:
+        "200":
+          description: The database is open and storage is writable.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ready
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/server/info:
+    get:
+      operationId: getServerInfo
+      summary: Server identity, versions, capabilities and upload limits
+      tags: [server, engine]
+      security: []
+      responses:
+        "200":
+          description: Server information.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerInfo"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  # @paths-auth
+  # @paths-sync
+  # @paths-uploads
+  # @paths-assets
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access token (`pt_at_…`) issued by login, pairing or refresh.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: pt_session
+      description: Web viewer session cookie. State-changing requests also send `X-CSRF-Token`.
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor returned by a previous call.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of items to return. The server may return fewer.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 200
+    PageToken:
+      name: page_token
+      in: query
+      required: false
+      description: Opaque token for the next snapshot page.
+      schema:
+        type: string
+    AssetId:
+      name: asset_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DeviceId:
+      name: device_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UploadId:
+      name: upload_id
+      in: path
+      required: true
+      schema:
+        type: string
+    Sha256Path:
+      name: sha256
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Sha256"
+    TusResumable:
+      name: Tus-Resumable
+      in: header
+      required: true
+      schema:
+        type: string
+        enum: ["1.0.0"]
+    UploadOffset:
+      name: Upload-Offset
+      in: header
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+    UploadLength:
+      name: Upload-Length
+      in: header
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+    UploadMetadata:
+      name: Upload-Metadata
+      in: header
+      required: true
+      description: tus metadata, comma-separated `key base64(value)` pairs. Keys are defined in sync-protocol.md §7.3.
+      schema:
+        type: string
+    UploadChecksum:
+      name: Upload-Checksum
+      in: header
+      required: false
+      description: Optional per-request checksum, `sha256 <base64 digest of this request body>`.
+      schema:
+        type: string
+    Range:
+      name: Range
+      in: header
+      required: false
+      schema:
+        type: string
+        example: bytes=0-1048575
+  headers:
+    TusResumable:
+      schema:
+        type: string
+        example: 1.0.0
+    UploadOffset:
+      schema:
+        type: integer
+        format: int64
+    UploadLength:
+      schema:
+        type: integer
+        format: int64
+    UploadExpires:
+      description: HTTP-date after which the upload session expires.
+      schema:
+        type: string
+    Location:
+      description: URL of the upload resource.
+      schema:
+        type: string
+    AssetId:
+      description: Asset the upload resolved to.
+      schema:
+        type: string
+        format: uuid
+    AssetCreated:
+      description: "`true` when this request created a new asset, `false` when it resolved to an existing one."
+      schema:
+        type: boolean
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
+    ETag:
+      description: Quoted SHA-256 of the returned bytes.
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: "The request is malformed. Codes: `invalid_request`, `cursor_required`, `pairing_code_invalid`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: "Missing or invalid credentials. Codes: `unauthorized`, `token_expired`, `refresh_token_reused`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: "The caller may not access this resource. Code: `forbidden`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: "Not found, or not generated yet. Codes: `not_found`, `not_ready`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: "Codes: `length_mismatch`, `tombstoned`, `pair_primary_missing`, `setup_already_done`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Gone:
+      description: "The cursor is older than the change-log retention. Code: `cursor_expired`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PayloadTooLarge:
+      description: "Codes: `file_too_large`, `quota_exceeded`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    RangeNotSatisfiable:
+      description: "The Range header cannot be satisfied. Code: `invalid_request`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Locked:
+      description: "Another request is writing to this upload. Code: `upload_locked`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UpgradeRequired:
+      description: "The app is older than `min_client_version`. Code: `client_too_old`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    TooManyRequests:
+      description: "Rate limited. Code: `rate_limited`."
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ChecksumMismatch:
+      description: "The bytes do not match the declared SHA-256. The upload session is discarded. Code: `checksum_mismatch`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    InternalError:
+      description: "Unexpected server error. Code: `internal`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ServiceUnavailable:
+      description: "Temporarily unavailable. Code: `server_unavailable`."
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    InsufficientStorage:
+      description: "The server's disk is too full to accept this upload. Code: `insufficient_storage`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details. `code` is stable and machine-readable; `title` and `detail` are for humans.
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          example: urn:pictunnel:problem:offset_mismatch
+        title:
+          type: string
+          example: Upload offset does not match
+        status:
+          type: integer
+          example: 409
+        detail:
+          type: string
+        code:
+          type: string
+          example: offset_mismatch
+          x-known-values:
+            - invalid_request
+            - cursor_required
+            - pairing_code_invalid
+            - unauthorized
+            - token_expired
+            - refresh_token_reused
+            - forbidden
+            - not_found
+            - not_ready
+            - offset_mismatch
+            - length_mismatch
+            - tombstoned
+            - pair_primary_missing
+            - setup_already_done
+            - cursor_expired
+            - file_too_large
+            - quota_exceeded
+            - upload_locked
+            - client_too_old
+            - rate_limited
+            - checksum_mismatch
+            - internal
+            - server_unavailable
+            - insufficient_storage
+        request_id:
+          type: string
+    Sha256:
+      type: string
+      description: Lowercase hex SHA-256 of the original bytes.
+      pattern: "^[0-9a-f]{64}$"
+      example: fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83
+    ServerInfo:
+      type: object
+      required: [server_id, name, version, api_version, min_client_version, capabilities, upload, time]
+      properties:
+        server_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Home server
+        version:
+          type: string
+          example: 0.1.0
+        api_version:
+          type: string
+          example: "1.0"
+        min_client_version:
+          $ref: "#/components/schemas/ClientVersions"
+        capabilities:
+          type: array
+          items:
+            type: string
+            x-known-values: [tus, ml, share_links, search]
+        upload:
+          $ref: "#/components/schemas/UploadLimits"
+        time:
+          type: string
+          format: date-time
+          description: Server clock, for skew diagnostics only.
+    ClientVersions:
+      type: object
+      required: [android, ios, web]
+      properties:
+        android:
+          type: string
+          example: 0.1.0
+        ios:
+          type: string
+          example: 0.1.0
+        web:
+          type: string
+          example: 0.1.0
+    UploadLimits:
+      type: object
+      required: [tus_version, max_file_bytes, recommended_chunk_bytes]
+      properties:
+        tus_version:
+          type: string
+          example: 1.0.0
+        max_file_bytes:
+          type: integer
+          format: int64
+          example: 53687091200
+        recommended_chunk_bytes:
+          type: integer
+          format: int64
+          example: 8388608
+    # @schemas-auth
+    # @schemas-sync
+    # @schemas-assets
