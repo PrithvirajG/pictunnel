@@ -53,3 +53,10 @@ tasks:
     desc: Validate conformance vectors (schema, semantics, minimum counts)
     cmds:
       - pnpm --dir api run vectors
+
+  test:server:
+    desc: Vet and test the Go server
+    dir: server
+    cmds:
+      - go vet ./...
+      - go test ./...
