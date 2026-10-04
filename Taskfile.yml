@@ -79,3 +79,26 @@ tasks:
       - pnpm --dir web run check
       - pnpm --dir web run test
       - pnpm --dir web run build
+
+  gen:engine-bundle:
+    desc: Bundle the engine-only subset of the contract
+    cmds:
+      - pnpm --dir api run bundle:engine
+
+  gen:kotlin:
+    desc: Generate the Kotlin engine client from the engine subset
+    deps: [gen:engine-bundle]
+    cmds:
+      - node tools/dev/rmrf.mjs mobile/android/engine-api/generated
+      - >-
+        {{.DOCKER_RUN}} {{.OPENAPI_GENERATOR_IMAGE}} generate
+        -i /repo/api/build/engine-openapi.yaml -g kotlin
+        -o /repo/mobile/android/engine-api/generated
+        --additional-properties=packageName=io.github.prithvirajg.pictunnel.engineapi,library=jvm-okhttp4,serializationLibrary=kotlinx_serialization,enumUnknownDefaultCase=true,omitGradleWrapper=true,dateLibrary=java8
+        --global-property=apiTests=false,modelTests=false,apiDocs=false,modelDocs=false
+
+  test:kotlin:
+    desc: Compile the Kotlin engine client and run its vector tests
+    cmds:
+      - >-
+        {{if eq .TOOLS_MODE "native"}}cd mobile/android/engine-api && ./gradlew test --no-daemon{{else}}{{.DOCKER_RUN}} -w /repo/mobile/android/engine-api -e GRADLE_USER_HOME=/tmp/gradle {{.GRADLE_IMAGE}} gradle test --no-daemon{{end}}
