@@ -1,0 +1,38 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Tooling caches
+.cache/
+.task/
+node_modules/
+api/build/
+
+# Go
+server/bin/
+server/dist/
+
+# Web
+web/.svelte-kit/
+web/build/
+
+# Kotlin / Gradle
+.gradle/
+**/build/
+
+# Swift
+.build/
+.swiftpm/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Dart / Flutter (flutter create adds mobile/.gitignore for the rest)
+.dart_tool/
