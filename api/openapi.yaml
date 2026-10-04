@@ -92,7 +92,190 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  # @paths-auth
+  /api/v1/auth/setup:
+    post:
+      operationId: setupFirstAdmin
+      summary: Create the first administrator account
+      description: Only succeeds while the server has no users; afterwards returns 409 `setup_already_done`.
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetupRequest"
+      responses:
+        "201":
+          description: Administrator created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      summary: Log in with a password
+      description: "`mode: tokens` returns device credentials (apps, requires `device`). `mode: cookie` sets the `pt_session` cookie and returns a CSRF token (web viewer)."
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Logged in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshTokens
+      summary: Rotate the refresh token and issue a new access token
+      description: Presenting the previous refresh token within 30 seconds of rotation returns the same successor pair. Later reuse revokes the device (`refresh_token_reused`).
+      tags: [auth, engine]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: New token pair.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke the current device session or web session
+      tags: [auth]
+      responses:
+        "204":
+          description: Logged out.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/pairing/codes:
+    post:
+      operationId: createPairingCode
+      summary: Create a one-time pairing code for the caller's account
+      tags: [pairing]
+      responses:
+        "201":
+          description: Pairing code valid for 10 minutes, single use.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairingCode"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/v1/pairing/redeem:
+    post:
+      operationId: redeemPairingCode
+      summary: Exchange a pairing code for device credentials
+      tags: [pairing]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedeemRequest"
+      responses:
+        "201":
+          description: Device paired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedeemResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/v1/devices:
+    get:
+      operationId: listDevices
+      summary: List the caller's paired devices
+      tags: [devices]
+      responses:
+        "200":
+          description: Devices.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/devices/{device_id}:
+    parameters:
+      - $ref: "#/components/parameters/DeviceId"
+    patch:
+      operationId: updateDevice
+      summary: Rename a device
+      tags: [devices]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DevicePatch"
+      responses:
+        "200":
+          description: Updated device.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: revokeDevice
+      summary: Revoke a device and all its tokens
+      tags: [devices]
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   # @paths-sync
   # @paths-uploads
   # @paths-assets
@@ -446,6 +629,178 @@ components:
           type: integer
           format: int64
           example: 8388608
-    # @schemas-auth
+    SetupRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+          pattern: "^[a-z0-9._-]+$"
+        password:
+          type: string
+          format: password
+          minLength: 10
+          maxLength: 256
+        display_name:
+          type: string
+          maxLength: 100
+    SetupResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+    DeviceRegistration:
+      type: object
+      required: [device_name, platform, app_version]
+      properties:
+        device_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Pixel 9
+        platform:
+          type: string
+          enum: [android, ios, web, other]
+        app_version:
+          type: string
+          example: 0.1.0
+    LoginRequest:
+      type: object
+      required: [username, password, mode]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        mode:
+          type: string
+          enum: [tokens, cookie]
+        device:
+          $ref: "#/components/schemas/DeviceRegistration"
+    LoginResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        device:
+          $ref: "#/components/schemas/Device"
+        tokens:
+          $ref: "#/components/schemas/TokenPair"
+        csrf_token:
+          type: string
+          description: Present in cookie mode; send as `X-CSRF-Token`.
+    User:
+      type: object
+      required: [id, username, display_name, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        role:
+          type: string
+          x-known-values: [admin, user]
+    TokenPair:
+      type: object
+      required: [access_token, access_token_expires_at, refresh_token, refresh_token_expires_at]
+      properties:
+        access_token:
+          type: string
+          example: pt_at_3q2-7wEXAMPLEtokenvalue
+        access_token_expires_at:
+          type: string
+          format: date-time
+        refresh_token:
+          type: string
+          example: pt_rt_9fEXAMPLErefreshvalue
+        refresh_token_expires_at:
+          type: string
+          format: date-time
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+    PairingCode:
+      type: object
+      required: [code, qr_uri, expires_at]
+      properties:
+        code:
+          type: string
+          pattern: "^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{2}$"
+          example: K7Q2-M9XD-4T
+        qr_uri:
+          type: string
+          example: pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=K7Q2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2F192.168.1.20%3A8443
+        expires_at:
+          type: string
+          format: date-time
+    RedeemRequest:
+      type: object
+      required: [code, device]
+      properties:
+        code:
+          type: string
+        device:
+          $ref: "#/components/schemas/DeviceRegistration"
+    RedeemResponse:
+      type: object
+      required: [server_id, user, device, tokens]
+      properties:
+        server_id:
+          type: string
+          format: uuid
+        user:
+          $ref: "#/components/schemas/User"
+        device:
+          $ref: "#/components/schemas/Device"
+        tokens:
+          $ref: "#/components/schemas/TokenPair"
+    Device:
+      type: object
+      required: [id, name, platform, app_version, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        platform:
+          type: string
+          x-known-values: [android, ios, web, other]
+        app_version:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+    DeviceList:
+      type: object
+      required: [devices]
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/Device"
+    DevicePatch:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
     # @schemas-sync
     # @schemas-assets
