@@ -3,17 +3,14 @@
   "private": true,
   "type": "module",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Contract lint, bundle and vector tooling for the PicTunnel API",
   "scripts": {
     "lint": "redocly lint pictunnel@v1 && node tools/contract-rules.mjs openapi.yaml",
     "bundle:engine": "redocly bundle engine@v1 --remove-unused-components -o build/engine-openapi.yaml && node tools/check-engine-bundle.mjs build/engine-openapi.yaml",
     "vectors": "node tools/validate-vectors.mjs",
     "test": "node --test \"tools/*.test.mjs\""
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "license": "Apache-2.0",
   "packageManager": "pnpm@10.34.6",
   "devDependencies": {
     "@redocly/cli": "^2.57.0",
