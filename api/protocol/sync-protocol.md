@@ -33,7 +33,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are to be interpreted as in RFC 211
 | Rate limits | `429` + `Retry-After` (seconds). |
 | Compatibility | Within v1, changes MUST be additive. Clients MUST ignore unknown fields and MUST treat unknown enum values per §9 R7. Breaking changes require `/api/v2`. |
 | Open value sets | Response fields whose set of values may grow (verdicts, states, kinds, problem codes, roles, platforms in responses) are declared `type: string` with the known values listed in `x-known-values`, never as a closed `enum`, so generated clients cannot crash on a new value. Request-only fields MAY use `enum`. |
-| Version gate | `426 Upgrade Required` with code `client_too_old` when `PicTunnel-Client: <platform>/<version>` is below `min_client_version`. |
+| Version gate | `426 Upgrade Required` with code `client_too_old` when `PicTunnel-Client: <platform>/<version>` is below `min_client_version`. `GET /api/v1/server/info`, `/healthz` and `/readyz` are exempt from the version gate, since clients use server info to learn `min_client_version`. |
 
 ## 4. Endpoint catalogue (v1, defined in M0)
 
@@ -45,13 +45,13 @@ Operations tagged **engine** are the only ones the native backup engines call.
 | `POST /api/v1/auth/setup` | none | auth | Create first admin; `409 setup_already_done` afterwards |
 | `POST /api/v1/auth/login` | none | auth | Password login → tokens (apps) or session cookie (web) |
 | `POST /api/v1/auth/refresh` | refresh token | engine, auth | Rotate refresh token, new access token (§6.2) |
-| `POST /api/v1/auth/logout` | bearer | auth | Revoke current device session |
+| `POST /api/v1/auth/logout` | bearer/cookie | auth | Revoke current device session |
 | `POST /api/v1/pairing/codes` | bearer/cookie | pairing | Create a one-time pairing code for the caller's account → `code`, `qr_uri`, `expires_at` |
 | `POST /api/v1/pairing/redeem` | none | pairing | Exchange code + device info for device credentials |
 | `GET /api/v1/devices` | bearer/cookie | devices | List caller's devices |
 | `PATCH /api/v1/devices/{device_id}` | bearer/cookie | devices | Rename |
 | `DELETE /api/v1/devices/{device_id}` | bearer/cookie | devices | Revoke a device |
-| `POST /api/v1/sync/check` | bearer | engine, sync | Batch content check (§7.2) |
+| `POST /api/v1/sync/check` | bearer/cookie | engine, sync | Batch content check (§7.2) |
 | `GET /api/v1/sync/changes` | bearer/cookie | sync | Delta change feed (§7.6) |
 | `GET /api/v1/sync/snapshot` | bearer/cookie | sync | Full metadata snapshot (§7.6) |
 | `OPTIONS /api/v1/uploads` | none | engine, uploads | tus capability discovery |
@@ -80,18 +80,18 @@ The tags `users`, `albums`, `shares`, `search`, `admin` and `ml` are reserved fo
 | `sha256` | hex | identity |
 | `size_bytes` | int64 | |
 | `mime` | string | |
-| `kind` | enum `photo` \| `video` \| `live_photo` | |
+| `kind` | string (known values: `photo`, `video`, `live_photo`) | |
 | `filename` | string | original name from the device |
 | `taken_at` | datetime, nullable | |
 | `taken_at_offset_minutes` | int, nullable | |
-| `taken_at_source` | enum `exif` \| `container` \| `client` \| `file` \| `unknown` | |
+| `taken_at_source` | string (known values: `exif`, `container`, `client`, `file`, `unknown`) | |
 | `width`, `height` | int, nullable | null until metadata job runs |
 | `duration_ms` | int, nullable | video / live component |
 | `lat`, `lon` | number, nullable | |
-| `state` | enum `active` \| `trashed` | |
+| `state` | string (known values: `active`, `trashed`) | |
 | `trashed_at` | datetime, nullable | |
 | `stack_id` | uuid, nullable | edits/bursts grouping |
-| `live_video` | object, nullable | `{sha256, size_bytes, mime}` |
+| `live_video` | object, omitted when absent | `{sha256, size_bytes, mime}` |
 | `thumbnails_ready` | bool | |
 | `created_at` | datetime | server ingest time |
 | `updated_seq` | int64 | change-log sequence of last change |
@@ -127,7 +127,7 @@ Prefixes make leaked tokens detectable by secret scanners. Opaque tokens (not JW
    ```
    `u` repeats in preference order (LAN first, then remote). `fp` is the base64url SHA-256 of the server certificate's SubjectPublicKeyInfo.
 3. Client connects to the first reachable `u`. **Pinning rule:** if the certificate chain validates against the system trust store and matches the host, accept; otherwise the SPKI hash MUST equal `fp`, else abort.
-4. `POST /pairing/redeem {code, device_name, platform, app_version}` → `{device_id, user, access_token, refresh_token, server_id}`.
+4. `POST /pairing/redeem {code, device: {device_name, platform, app_version}}` → `201 {server_id, user, device, tokens}`.
 5. Manual setup without QR: user enters a URL and logs in; for a self-signed certificate the app shows the fingerprint's first 16 chars for comparison with the server's admin page (trust on first use) and then pins it.
 
 ### 6.4 Discovery and transport
