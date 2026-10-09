@@ -1,5 +1,6 @@
 name: ci-server
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths: ["server/**", "api/openapi.yaml", "api/protocol/**", ".github/workflows/ci-server.yml"]

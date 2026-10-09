@@ -1,5 +1,6 @@
 name: ci-web
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths: ["web/**", "api/openapi.yaml", "Taskfile.yml", ".github/workflows/ci-web.yml"]
