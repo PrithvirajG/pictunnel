@@ -21,7 +21,7 @@ func TestHashingVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer r.Close()
+			defer func() { _ = r.Close() }()
 			got, err := contenthash.HashReader(r)
 			if err != nil {
 				t.Fatal(err)

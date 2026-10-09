@@ -18,7 +18,7 @@ jobs:
           cache-dependency-path: server/go.sum
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          version: v2.14.0
           working-directory: server
       - run: go vet ./...
         working-directory: server

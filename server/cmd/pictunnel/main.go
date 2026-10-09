@@ -16,9 +16,9 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
-		fmt.Fprintf(stdout, "pictunnel %s\n", version)
+		_, _ = fmt.Fprintf(stdout, "pictunnel %s\n", version)
 		return 0
 	}
-	fmt.Fprintln(stderr, "usage: pictunnel version")
+	_, _ = fmt.Fprintln(stderr, "usage: pictunnel version")
 	return 2
 }

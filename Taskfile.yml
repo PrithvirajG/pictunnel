@@ -5,6 +5,7 @@ vars:
   OPENAPI_GENERATOR_IMAGE: openapitools/openapi-generator-cli:v7.24.0
   GRADLE_IMAGE: gradle:9.3.0-jdk17
   SWIFT_IMAGE: swift:6.2
+  GOLANGCI_LINT_VERSION: v2.14.0
   SWIFT_OPENAPI_GENERATOR_VERSION: 1.13.0
   FLUTTER_VERSION:
     sh: node tools/dev/read-version.mjs mobile/.flutter-version stable
@@ -60,6 +61,12 @@ tasks:
     cmds:
       - go vet ./...
       - go test ./...
+
+  lint:server:
+    desc: Lint the Go server with golangci-lint (pinned)
+    dir: server
+    cmds:
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run ./...
 
   gen:go:
     desc: Generate Go server interfaces and models from the contract
@@ -171,6 +178,7 @@ tasks:
     desc: Contract lint and repository checks
     cmds:
       - task: lint:api
+      - task: lint:server
       - task: check:eol
 
   test:

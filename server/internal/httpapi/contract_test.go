@@ -40,7 +40,7 @@ func TestCheckRequestRoundTripsSnakeCase(t *testing.T) {
 }
 
 func TestEmbeddedSpecContainsSyncCheck(t *testing.T) {
-	spec, err := gen.GetSwagger()
+	spec, err := gen.GetSpec()
 	if err != nil {
 		t.Fatal(err)
 	}
