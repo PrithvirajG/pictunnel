@@ -151,3 +151,51 @@ tasks:
       - uv sync --project ml
       - uv run --project ml ruff check ml
       - uv run --project ml pytest ml
+
+  setup:
+    desc: Install JavaScript dependencies for api/ and web/
+    cmds:
+      - pnpm --dir api install --frozen-lockfile
+      - pnpm --dir web install --frozen-lockfile
+
+  gen:
+    desc: Regenerate every client from api/openapi.yaml
+    cmds:
+      - task: gen:go
+      - task: gen:ts
+      - task: gen:kotlin
+      - task: gen:swift
+      - task: gen:dart
+
+  lint:
+    desc: Contract lint and repository checks
+    cmds:
+      - task: lint:api
+      - task: check:eol
+
+  test:
+    desc: Every test suite
+    cmds:
+      - task: test:tools
+      - task: test:api
+      - task: test:server
+      - task: test:web
+      - task: test:kotlin
+      - task: test:swift
+      - task: test:mobile
+      - task: test:ml
+
+  check:drift:
+    desc: Fail if generated code differs from the commit
+    cmds:
+      - node tools/ci/check-clean.mjs
+
+  ci:
+    desc: Everything CI checks, runnable locally (start from a clean working tree)
+    cmds:
+      - task: setup
+      - task: lint
+      - task: vectors:validate
+      - task: gen
+      - task: check:drift
+      - task: test

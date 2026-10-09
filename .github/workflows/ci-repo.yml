@@ -1,0 +1,21 @@
+name: ci-repo
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  repo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Line endings
+        run: node tools/ci/check-eol.mjs
+      - name: Repo script tests
+        run: node --test "tools/ci/*.test.mjs"
+      - name: Lint workflows
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest -color

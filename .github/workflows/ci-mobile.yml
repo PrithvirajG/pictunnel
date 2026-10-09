@@ -1,0 +1,63 @@
+name: ci-mobile
+on:
+  push:
+    branches: [main]
+    paths: ["mobile/**", "api/protocol/**", ".github/workflows/ci-mobile.yml"]
+  pull_request:
+    paths: ["mobile/**", "api/protocol/**", ".github/workflows/ci-mobile.yml"]
+permissions:
+  contents: read
+jobs:
+  flutter-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - id: flutter
+        run: echo "version=$(cat mobile/.flutter-version)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          cache: true
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task test:mobile TOOLS_MODE=native
+      - name: Build Android debug APK
+        working-directory: mobile
+        run: flutter build apk --debug
+  engine-kotlin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task test:kotlin TOOLS_MODE=native
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: flutter
+        run: echo "version=$(cat mobile/.flutter-version)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          cache: true
+      - name: Build iOS without code signing
+        working-directory: mobile
+        run: flutter pub get && flutter build ios --debug --no-codesign
+      - name: Swift EngineAPI tests
+        run: swift test --package-path mobile/ios/EngineAPI

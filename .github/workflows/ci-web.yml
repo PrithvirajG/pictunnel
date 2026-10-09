@@ -1,0 +1,28 @@
+name: ci-web
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "api/openapi.yaml", ".github/workflows/ci-web.yml"]
+  pull_request:
+    paths: ["web/**", "api/openapi.yaml", ".github/workflows/ci-web.yml"]
+permissions:
+  contents: read
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: task test:web

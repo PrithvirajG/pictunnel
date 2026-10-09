@@ -1,0 +1,89 @@
+name: ci-api
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "server/internal/httpapi/**"
+      - "web/src/lib/api/**"
+      - "mobile/packages/pictunnel_api/**"
+      - "mobile/android/engine-api/generated/**"
+      - "mobile/ios/EngineAPI/Sources/EngineAPI/Generated/**"
+      - "Taskfile.yml"
+      - "tools/**"
+      - ".github/workflows/ci-api.yml"
+  pull_request:
+    paths:
+      - "api/**"
+      - "server/internal/httpapi/**"
+      - "web/src/lib/api/**"
+      - "mobile/packages/pictunnel_api/**"
+      - "mobile/android/engine-api/generated/**"
+      - "mobile/ios/EngineAPI/Sources/EngineAPI/Generated/**"
+      - "Taskfile.yml"
+      - "tools/**"
+      - ".github/workflows/ci-api.yml"
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: "**/pnpm-lock.yaml"
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task api:install
+      - run: task lint:api
+      - run: task test:api
+      - run: task vectors:validate
+      - name: Breaking changes against the base branch
+        if: github.event_name == 'pull_request'
+        run: |
+          if git show "origin/${{ github.base_ref }}:api/openapi.yaml" > /tmp/base.yaml 2>/dev/null; then
+            docker run --rm -v /tmp:/base -v "$PWD/api:/spec" tufin/oasdiff breaking /base/base.yaml /spec/openapi.yaml --fail-on ERR
+          else
+            echo "No contract on the base branch yet; skipping."
+          fi
+  codegen-drift:
+    needs: contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: "**/pnpm-lock.yaml"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: codegen-${{ hashFiles('Taskfile.yml') }}
+      - run: task setup
+      - name: Generated code matches the commit
+        run: task gen && task check:drift
+      - name: Generation is deterministic
+        run: task gen && task check:drift
+      - name: No root-owned files from containers
+        run: test -z "$(find . -path ./.git -prune -o -user root -print | head -1)"
