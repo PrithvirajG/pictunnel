@@ -132,8 +132,9 @@ tasks:
       - >-
         {{if eq .TOOLS_MODE "native"}}swift test -j 1 --package-path mobile/ios/EngineAPI{{else}}{{.DOCKER_RUN}} {{.SWIFT_IMAGE}} swift test -j 1 --package-path /repo/mobile/ios/EngineAPI --scratch-path /repo/.cache/engineapi-build{{end}}
 
-  gen:dart:
-    desc: Generate the Dart client package for the Flutter app
+  gen:dart:generate:
+    desc: Regenerate the Dart client sources (internal step of gen:dart)
+    internal: true
     cmds:
       - node tools/dev/rmrf.mjs mobile/packages/pictunnel_api
       - >-
@@ -142,9 +143,22 @@ tasks:
         -o /repo/mobile/packages/pictunnel_api
         --additional-properties=pubName=pictunnel_api,pubLibrary=pictunnel_api,enumUnknownDefaultCase=true
         --global-property=apiTests=false,modelTests=false,apiDocs=false,modelDocs=false
+
+  gen:dart:
+    desc: Generate the Dart client package for the Flutter app (dependencies pinned by tools/dev/pictunnel_api.pubspec.lock)
+    cmds:
+      - task: gen:dart:generate
       - >-
         {{.DOCKER_RUN}} -w /repo/mobile/packages/pictunnel_api {{.DART_IMAGE}}
-        bash -c "dart pub get && dart run build_runner build --delete-conflicting-outputs"
+        bash -c "cp /repo/tools/dev/pictunnel_api.pubspec.lock pubspec.lock && dart pub get --enforce-lockfile && dart run build_runner build"
+
+  gen:dart:update-lock:
+    desc: Refresh tools/dev/pictunnel_api.pubspec.lock (resolves without enforcement, then copies the lock back)
+    cmds:
+      - task: gen:dart:generate
+      - >-
+        {{.DOCKER_RUN}} -w /repo/mobile/packages/pictunnel_api {{.DART_IMAGE}}
+        bash -c "dart pub get && cp pubspec.lock /repo/tools/dev/pictunnel_api.pubspec.lock"
 
   test:mobile:
     desc: Analyze and test the Flutter app
