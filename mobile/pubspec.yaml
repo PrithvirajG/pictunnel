@@ -1,5 +1,5 @@
 name: pictunnel
-description: "A new Flutter project."
+description: "PicTunnel mobile app (Flutter) with native backup engines."
 publish_to: 'none'
 version: 0.1.0+1
 
