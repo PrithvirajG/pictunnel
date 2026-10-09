@@ -9,6 +9,11 @@ on:
       - "mobile/packages/pictunnel_api/**"
       - "mobile/android/engine-api/generated/**"
       - "mobile/ios/EngineAPI/Sources/EngineAPI/Generated/**"
+      - "mobile/ios/EngineAPI/openapi-generator-config.yaml"
+      - "server/go.mod"
+      - "server/go.sum"
+      - "web/package.json"
+      - "web/pnpm-lock.yaml"
       - "Taskfile.yml"
       - "tools/**"
       - ".github/workflows/ci-api.yml"
@@ -20,6 +25,11 @@ on:
       - "mobile/packages/pictunnel_api/**"
       - "mobile/android/engine-api/generated/**"
       - "mobile/ios/EngineAPI/Sources/EngineAPI/Generated/**"
+      - "mobile/ios/EngineAPI/openapi-generator-config.yaml"
+      - "server/go.mod"
+      - "server/go.sum"
+      - "web/package.json"
+      - "web/pnpm-lock.yaml"
       - "Taskfile.yml"
       - "tools/**"
       - ".github/workflows/ci-api.yml"
@@ -50,8 +60,10 @@ jobs:
       - run: task vectors:validate
       - name: Breaking changes against the base branch
         if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          if git show "origin/${{ github.base_ref }}:api/openapi.yaml" > /tmp/base.yaml 2>/dev/null; then
+          if git show "origin/$BASE_REF:api/openapi.yaml" > /tmp/base.yaml 2>/dev/null; then
             docker run --rm -v /tmp:/base -v "$PWD/api:/spec" tufin/oasdiff breaking /base/base.yaml /spec/openapi.yaml --fail-on ERR
           else
             echo "No contract on the base branch yet; skipping."
