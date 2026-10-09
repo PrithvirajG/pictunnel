@@ -13,7 +13,7 @@
     },
     {
       "name": "fixture_tiny_heic",
-      "description": "Real HEIC file (506 bytes), dated 2024-05-06T10:00:00Z.",
+      "description": "Real HEIC file (506 bytes), no embedded date.",
       "input": {
         "file": "fixtures/tiny.heic"
       },

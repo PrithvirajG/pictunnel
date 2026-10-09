@@ -60,10 +60,13 @@ def main() -> None:
         make(path)
         size = path.stat().st_size
         assert size < MAX_BYTES, f"{name} is {size} bytes; fixtures must stay under 64 KiB"
+        ext = name.split(".")[-1]
+        # HEIC carries no embedded date; only claim one for jpg/mp4.
+        dated = ", dated 2024-05-06T10:00:00Z" if ext in ("jpg", "mp4") else ", no embedded date"
         cases.append(
             {
                 "name": "fixture_" + name.replace(".", "_"),
-                "description": f"Real {name.split('.')[-1].upper()} file ({size} bytes), dated 2024-05-06T10:00:00Z.",
+                "description": f"Real {ext.upper()} file ({size} bytes){dated}.",
                 "input": {"file": f"fixtures/{name}"},
                 "expected_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             }
