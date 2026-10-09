@@ -2,9 +2,9 @@ name: ci-mobile
 on:
   push:
     branches: [main]
-    paths: ["mobile/**", "api/protocol/**", ".github/workflows/ci-mobile.yml"]
+    paths: ["mobile/**", "api/protocol/**", "Taskfile.yml", ".github/workflows/ci-mobile.yml"]
   pull_request:
-    paths: ["mobile/**", "api/protocol/**", ".github/workflows/ci-mobile.yml"]
+    paths: ["mobile/**", "api/protocol/**", "Taskfile.yml", ".github/workflows/ci-mobile.yml"]
 permissions:
   contents: read
 jobs:

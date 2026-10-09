@@ -2,9 +2,9 @@ name: ci-ml
 on:
   push:
     branches: [main]
-    paths: ["ml/**", ".github/workflows/ci-ml.yml"]
+    paths: ["ml/**", "Taskfile.yml", ".github/workflows/ci-ml.yml"]
   pull_request:
-    paths: ["ml/**", ".github/workflows/ci-ml.yml"]
+    paths: ["ml/**", "Taskfile.yml", ".github/workflows/ci-ml.yml"]
 permissions:
   contents: read
 jobs:

@@ -2,9 +2,9 @@ name: ci-web
 on:
   push:
     branches: [main]
-    paths: ["web/**", "api/openapi.yaml", ".github/workflows/ci-web.yml"]
+    paths: ["web/**", "api/openapi.yaml", "Taskfile.yml", ".github/workflows/ci-web.yml"]
   pull_request:
-    paths: ["web/**", "api/openapi.yaml", ".github/workflows/ci-web.yml"]
+    paths: ["web/**", "api/openapi.yaml", "Taskfile.yml", ".github/workflows/ci-web.yml"]
 permissions:
   contents: read
 jobs:
