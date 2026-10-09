@@ -2,7 +2,7 @@
 
 Self-hosted photo and video backup that installs like a desktop app, backs up phones reliably in the background, and never stores the same photo twice.
 
-> **Status: pre-alpha.** Nothing is usable yet. Milestone M0 (contract, sync protocol, repository foundation) is in progress.
+> **Status: pre-alpha.** Milestone M0 is complete: API contract, sync protocol, conformance vectors and repository foundation. Next: sub-project 2 (server core).
 
 ## Repository layout
 
