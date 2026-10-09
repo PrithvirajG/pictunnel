@@ -26,8 +26,8 @@
     },
     {
       "name": "malformed_code",
-      "description": "Contains the letter I, which Crockford base32 excludes.",
-      "uri": "pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=KIQ2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2F192.168.1.20%3A8443",
+      "description": "Contains the letter U, which Crockford base32 excludes and does not alias.",
+      "uri": "pictunnel://pair?v=1&sid=01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f&code=KUQ2-M9XD-4T&fp=xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc&u=https%3A%2F%2F192.168.1.20%3A8443",
       "expect": { "parse": "error", "error": "invalid_code" }
     },
     {
