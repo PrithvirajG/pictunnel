@@ -6,7 +6,7 @@ import { parse } from "yaml";
 import { engineOperationIds as allOperationIds } from "./check-engine-bundle.mjs";
 
 export function missingExamples(operationIds, markdown) {
-  return operationIds.filter((id) => !new RegExp("^#### `" + id + "`\s*$", "m").test(markdown));
+  return operationIds.filter((id) => !new RegExp("^#### `" + id + "`\\s*$", "m").test(markdown));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
