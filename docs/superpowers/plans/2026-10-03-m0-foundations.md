@@ -16,7 +16,7 @@
 - Response fields whose value set may grow are `type: string` with `x-known-values`; only request-only fields may use `enum`. Never put sibling keys next to `$ref` (OpenAPI 3.0).
 - Identifiers: Go module `github.com/PrithvirajG/pictunnel/server`; Android applicationId and iOS bundle id `io.github.prithvirajg.pictunnel`; Kotlin package `io.github.prithvirajg.pictunnel.engineapi`; Dart package `pictunnel_api`; Docker image `ghcr.io/prithvirajg/pictunnel`.
 - Licenses: root `LICENSE` AGPL-3.0 (covers `server/`, `web/`, `ml/`); `api/LICENSE` and `mobile/LICENSE` Apache-2.0.
-- Every commit: `git commit -s` (DCO) and the trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Every commit: `git commit -s` (DCO sign-off only; no AI attribution trailers).
 - All text files LF (`.gitattributes`); `.bat/.cmd/.ps1` CRLF.
 - Generated directories are never edited by hand: `server/internal/httpapi/gen/`, `web/src/lib/api/schema.d.ts`, `mobile/packages/pictunnel_api/`, `mobile/android/engine-api/generated/`, `mobile/ios/EngineAPI/Sources/EngineAPI/Generated/`. Fix the contract and regenerate.
 - Pinned images (Taskfile vars): `openapitools/openapi-generator-cli:v7.24.0`, `gradle:9.3.0-jdk17`, `swift:6.2`, `ghcr.io/cirruslabs/flutter:<mobile/.flutter-version>`, `dart:<pinned in Task 19>`.
@@ -327,7 +327,7 @@ Expected: `all LF` (binary/none entries filtered).
 - [ ] **Step 10: Commit**
 
 ```bash
-git commit -s -m "chore: add repository hygiene, licenses and contributor docs" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "chore: add repository hygiene, licenses and contributor docs"
 ```
 
 ---
@@ -556,7 +556,7 @@ Run: `git add -A && task check:eol` → `eol: ok`.
 
 ```bash
 git add -A
-git commit -s -m "build: add Taskfile, Docker helpers and repo check scripts" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "build: add Taskfile, Docker helpers and repo check scripts"
 ```
 
 ---
@@ -775,7 +775,7 @@ Revocation is immediate and there are no signing keys to manage. Every request c
 Run: `ls docs/adr | wc -l` → `11`.
 ```bash
 git add docs/adr
-git commit -s -m "docs: add ADRs 0001-0011" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "docs: add ADRs 0001-0011"
 ```
 
 ---
@@ -1109,7 +1109,7 @@ Append to the end of `Taskfile.yml`:
 
 ```bash
 git add api/package.json api/pnpm-lock.yaml api/redocly.yaml api/tools Taskfile.yml
-git commit -s -m "build(api): add contract tooling and project lint rules" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "build(api): add contract tooling and project lint rules"
 ```
 
 ---
@@ -1593,7 +1593,7 @@ Expected: Redocly reports no errors (warnings about unused components are accept
 
 ```bash
 git add api/openapi.yaml
-git commit -s -m "feat(api): add OpenAPI foundation, shared components and server info" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(api): add OpenAPI foundation, shared components and server info"
 ```
 
 ---
@@ -1982,7 +1982,7 @@ git commit -s -m "feat(api): add OpenAPI foundation, shared components and serve
 
 ```bash
 git add api/openapi.yaml
-git commit -s -m "feat(api): add auth, pairing and device endpoints" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(api): add auth, pairing and device endpoints"
 ```
 
 ---
@@ -2465,7 +2465,7 @@ Expected: no errors, `contract rules: ok`. Redocly may warn that status `460` is
 
 ```bash
 git add api/openapi.yaml
-git commit -s -m "feat(api): add sync check, change feed, snapshot and tus upload endpoints" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(api): add sync check, change feed, snapshot and tus upload endpoints"
 ```
 
 ---
@@ -2802,7 +2802,7 @@ Run: `grep -n "# @" api/openapi.yaml` → no output (all markers replaced).
 
 ```bash
 git add api/openapi.yaml
-git commit -s -m "feat(api): add asset, trash and tombstone endpoints" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(api): add asset, trash and tombstone endpoints"
 ```
 
 ---
@@ -3298,7 +3298,7 @@ Append to `Taskfile.yml`:
 
 ```bash
 git add api/protocol/vectors/vectors.schema.json api/tools/validate-vectors.mjs api/tools/validate-vectors.test.mjs api/package.json Taskfile.yml
-git commit -s -m "feat(api): add conformance vector schema and validator" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(api): add conformance vector schema and validator"
 ```
 
 ---
@@ -3436,7 +3436,7 @@ Expected: `vectors: ok {"hashing":11}`.
 
 ```bash
 git add api/protocol/vectors/hashing api/protocol/fixtures api/tools/make_fixtures.py
-git commit -s -m "test(api): add hashing vectors and media fixtures" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "test(api): add hashing vectors and media fixtures"
 ```
 
 ---
@@ -3544,7 +3544,7 @@ Expected: `vectors: ok {"hashing":11,"pairing":12}`.
 
 ```bash
 git add api/protocol/vectors/pairing
-git commit -s -m "test(api): add pairing URI and pinning vectors" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "test(api): add pairing URI and pinning vectors"
 ```
 
 ---
@@ -4225,7 +4225,7 @@ Expected: `vectors: ok {"hashing":11,"pairing":12,"server-scenario":17}`.
 
 ```bash
 git add api/protocol/vectors/server-scenarios
-git commit -s -m "test(api): add server-scenario conformance vectors" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "test(api): add server-scenario conformance vectors"
 ```
 
 ---
@@ -4369,7 +4369,7 @@ Expected: `vectors: ok {"hashing":11,"pairing":12,"server-scenario":17,"client-d
 
 ```bash
 git add api/protocol/vectors/client-decisions
-git commit -s -m "test(api): add client-decision conformance vectors" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "test(api): add client-decision conformance vectors"
 ```
 
 ---
@@ -4686,7 +4686,7 @@ Expected: `ok` for both packages; `TestHashingVectors` runs 11 subtests.
 
 ```bash
 git add server Taskfile.yml
-git commit -s -m "feat(server): add content hashing and Go conformance vector runner" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(server): add content hashing and Go conformance vector runner"
 ```
 
 ---
@@ -4876,7 +4876,7 @@ Expected: exit 0 (proves no cgo dependency).
 
 ```bash
 git add server Taskfile.yml
-git commit -s -m "feat(server): generate Go API interfaces and add the pictunnel command" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(server): generate Go API interfaces and add the pictunnel command"
 ```
 
 ---
@@ -5080,7 +5080,7 @@ Expected: svelte-check 0 errors; vitest 1 passed; `vite build` writes `web/build
 
 ```bash
 git add web Taskfile.yml
-git commit -s -m "feat(web): add SvelteKit skeleton and generated TypeScript client" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(web): add SvelteKit skeleton and generated TypeScript client"
 ```
 
 ---
@@ -5387,7 +5387,7 @@ Expected: BUILD SUCCESSFUL; the generated client compiles; 3 tests pass (11 hash
 
 ```bash
 git add api/tools/check-engine-bundle.mjs api/tools/check-engine-bundle.test.mjs mobile/android/engine-api Taskfile.yml
-git commit -s -m "feat(mobile): add engine-subset bundle and Kotlin engine-api module" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(mobile): add engine-subset bundle and Kotlin engine-api module"
 ```
 
 ---
@@ -5607,7 +5607,7 @@ Expected: the generated client compiles on Linux; `Executed 2 tests, with 0 fail
 
 ```bash
 git add mobile/ios/EngineAPI Taskfile.yml
-git commit -s -m "feat(mobile): add Swift EngineAPI package with generated client" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(mobile): add Swift EngineAPI package with generated client"
 ```
 
 ---
@@ -5724,7 +5724,7 @@ Expected: `No issues found!` from analyze; `All tests passed!` (2 tests).
 
 ```bash
 git add mobile tools/dev/dart-image.txt Taskfile.yml
-git commit -s -m "feat(mobile): add Flutter app skeleton and generated Dart client" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(mobile): add Flutter app skeleton and generated Dart client"
 ```
 
 ---
@@ -5809,7 +5809,7 @@ Run: `task test:ml` → `All checks passed!` and `1 passed`.
 
 ```bash
 git add ml Taskfile.yml
-git commit -s -m "feat(ml): add ML worker skeleton" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "feat(ml): add ML worker skeleton"
 ```
 
 ---
@@ -6405,7 +6405,7 @@ Expected: Redocly clean, `contract rules: ok`, `protocol doc: ok (30 operations 
 
 ```bash
 git add api/protocol/sync-protocol.md api/tools/check-protocol-doc.mjs api/tools/check-protocol-doc.test.mjs api/package.json
-git commit -s -m "docs(api): add normative sync protocol with worked examples" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "docs(api): add normative sync protocol with worked examples"
 ```
 
 ---
@@ -6811,7 +6811,7 @@ Expected: no output, exit 0.
 
 ```bash
 git add .github/workflows tools/ci/check-clean.mjs Taskfile.yml
-git commit -s -m "ci: add path-filtered workflows, drift check and aggregate tasks" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "ci: add path-filtered workflows, drift check and aggregate tasks"
 ```
 
 ---
@@ -6878,6 +6878,6 @@ In `README.md` replace the status block with:
 ```
 ```bash
 git add README.md
-git commit -s -m "docs: mark milestone M0 complete" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -s -m "docs: mark milestone M0 complete"
 git push
 ```
