@@ -13,4 +13,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: node tools/ci/check-dco.mjs "origin/${{ github.base_ref }}" HEAD
+      - run: node tools/ci/check-dco.mjs "origin/$BASE_REF" HEAD
+        env:
+          BASE_REF: ${{ github.base_ref }}
