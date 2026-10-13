@@ -91,17 +91,23 @@ func (q *Queries) EnqueueJob(ctx context.Context, arg EnqueueJobParams) (int64, 
 }
 
 const extendJobLease = `-- name: ExtendJobLease :execrows
-UPDATE jobs SET lease_until = ?, updated_at = ? WHERE id = ? AND state = 'running'
+UPDATE jobs SET lease_until = ?, updated_at = ? WHERE id = ? AND state = 'running' AND attempts = ?
 `
 
 type ExtendJobLeaseParams struct {
 	LeaseUntil *string
 	UpdatedAt  string
 	ID         string
+	Attempts   int64
 }
 
 func (q *Queries) ExtendJobLease(ctx context.Context, arg ExtendJobLeaseParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, extendJobLease, arg.LeaseUntil, arg.UpdatedAt, arg.ID)
+	result, err := q.db.ExecContext(ctx, extendJobLease,
+		arg.LeaseUntil,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.Attempts,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -255,4 +261,29 @@ func (q *Queries) ListPendingJobs(ctx context.Context, kind string) ([]Job, erro
 		return nil, err
 	}
 	return items, nil
+}
+
+const releaseJob = `-- name: ReleaseJob :execrows
+UPDATE jobs SET state = 'pending', attempts = attempts - 1, run_after = ?, lease_until = NULL, updated_at = ?
+WHERE id = ? AND state = 'running' AND attempts = ? AND attempts > 0
+`
+
+type ReleaseJobParams struct {
+	RunAfter  string
+	UpdatedAt string
+	ID        string
+	Attempts  int64
+}
+
+func (q *Queries) ReleaseJob(ctx context.Context, arg ReleaseJobParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseJob,
+		arg.RunAfter,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.Attempts,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

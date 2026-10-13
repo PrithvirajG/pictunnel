@@ -19,7 +19,7 @@ WHERE id = (
 RETURNING *;
 
 -- name: ExtendJobLease :execrows
-UPDATE jobs SET lease_until = ?, updated_at = ? WHERE id = ? AND state = 'running';
+UPDATE jobs SET lease_until = ?, updated_at = ? WHERE id = ? AND state = 'running' AND attempts = ?;
 
 -- name: CompleteJob :execrows
 UPDATE jobs SET state = 'done', lease_until = NULL, updated_at = ? WHERE id = ? AND state = 'running' AND attempts = ?;
@@ -29,6 +29,10 @@ UPDATE jobs SET state = 'pending', last_error = ?, run_after = ?, lease_until = 
 
 -- name: DeadJob :execrows
 UPDATE jobs SET state = 'dead', last_error = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND state = 'running' AND attempts = ?;
+
+-- name: ReleaseJob :execrows
+UPDATE jobs SET state = 'pending', attempts = attempts - 1, run_after = ?, lease_until = NULL, updated_at = ?
+WHERE id = ? AND state = 'running' AND attempts = ? AND attempts > 0;
 
 -- name: ListPendingJobs :many
 SELECT * FROM jobs WHERE kind = ? AND state IN ('pending', 'running') ORDER BY run_after, id;

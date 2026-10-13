@@ -118,8 +118,7 @@ func TestPermanentErrorIsDeadImmediately(t *testing.T) {
 
 func TestRunNowRunsPeriodicHandlerOnce(t *testing.T) {
 	e := newEnv(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := context.Background()
 	var calls atomic.Int32
 	var gotNil atomic.Bool
 	e.r.Register("p", func(_ context.Context, payload []byte) error {
@@ -127,8 +126,14 @@ func TestRunNowRunsPeriodicHandlerOnce(t *testing.T) {
 		gotNil.Store(payload == nil)
 		return nil
 	}, 0)
+	// Start with no pools so nothing runs the scheduled job; stop the
+	// scheduler before RunNow so the direct-run path is exercised.
 	e.r.Start(ctx, nil, []jobs.Periodic{{Kind: "p", Every: time.Hour}})
-	defer e.r.Stop()
+	e.r.Stop()
+	// Drop whatever the scheduler enqueued so only the direct path remains.
+	if _, err := e.s.W.ExecContext(ctx, "DELETE FROM jobs"); err != nil {
+		t.Fatal(err)
+	}
 	if err := e.r.RunNow(ctx, "p"); err != nil {
 		t.Fatal(err)
 	}
@@ -246,5 +251,31 @@ func TestBackoffBounds(t *testing.T) {
 				t.Fatalf("Backoff(%d) = %v, want (0, %v]", attempts, d, ceil)
 			}
 		}
+	}
+}
+
+func TestShutdownInterruptedJobIsReleasedWithoutPenalty(t *testing.T) {
+	e := newEnv(t)
+	started := make(chan struct{})
+	e.r.Register("k", func(ctx context.Context, _ []byte) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}, 3)
+	e.r.Start(context.Background(), []jobs.Pool{{Name: "p", Workers: 1, Kinds: []string{"k"}}}, nil)
+	e.enqueue(t, "k", "a")
+	waitFor(t, started, "handler start")
+	e.r.StopWithTimeout(50 * time.Millisecond)
+
+	pend, err := e.rep.ListPending(context.Background(), e.s.R, "k")
+	if err != nil || len(pend) != 1 {
+		t.Fatalf("pending: %+v %v", pend, err)
+	}
+	j := pend[0]
+	if j.State != "pending" || j.Attempts != 0 || j.LeaseUntil != nil || j.LastError != nil {
+		t.Fatalf("job not cleanly released: %+v", j)
+	}
+	if j.RunAfter.After(e.clk.Now()) {
+		t.Fatalf("released job must be runnable now: %v", j.RunAfter)
 	}
 }

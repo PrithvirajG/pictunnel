@@ -27,7 +27,12 @@ const (
 	pollInterval      = time.Second
 	backoffBase       = 30 * time.Second
 	backoffCap        = time.Hour
+	// DefaultStopGrace is how long Stop lets in-flight handlers finish before
+	// cancelling their context.
+	DefaultStopGrace = 30 * time.Second
 )
+
+var errLeaseLost = errors.New("jobs: lease lost")
 
 // Handler processes one job payload. A nil payload means a periodic run.
 type Handler func(ctx context.Context, payload []byte) error
@@ -69,11 +74,12 @@ type Runner struct {
 	clk  clock.Clock
 	log  *slog.Logger
 
-	mu       sync.Mutex
-	handlers map[string]registration
-	periodic map[string]time.Duration
-	wake     chan struct{} // closed and replaced to broadcast "new work"
-	stopLoop context.CancelFunc
+	mu             sync.Mutex
+	handlers       map[string]registration
+	periodic       map[string]time.Duration
+	wake           chan struct{} // closed and replaced to broadcast "new work"
+	stopLoop       context.CancelFunc
+	cancelHandlers context.CancelFunc // cancels the context handlers run under
 
 	wg sync.WaitGroup
 }
@@ -149,8 +155,10 @@ func (r *Runner) wakeCh() <-chan struct{} {
 // and wake early on Enqueue. ctx is passed to handlers; Stop only ends polling.
 func (r *Runner) Start(ctx context.Context, pools []Pool, periodic []Periodic) {
 	loopCtx, cancel := context.WithCancel(ctx)
+	handlerCtx, cancelHandlers := context.WithCancel(ctx)
 	r.mu.Lock()
 	r.stopLoop = cancel
+	r.cancelHandlers = cancelHandlers
 	for _, p := range periodic {
 		r.periodic[p.Kind] = p.Every
 	}
@@ -160,7 +168,7 @@ func (r *Runner) Start(ctx context.Context, pools []Pool, periodic []Periodic) {
 		kinds := append([]string(nil), p.Kinds...)
 		for i := 0; i < p.Workers; i++ {
 			r.wg.Add(1)
-			go r.worker(loopCtx, ctx, p.Name, kinds)
+			go r.worker(loopCtx, handlerCtx, p.Name, kinds)
 		}
 	}
 	for _, p := range periodic {
@@ -172,15 +180,32 @@ func (r *Runner) Start(ctx context.Context, pools []Pool, periodic []Periodic) {
 	}
 }
 
-// Stop ends polling and waits for in-flight handlers to return.
-func (r *Runner) Stop() {
+// Stop ends polling and waits up to DefaultStopGrace for in-flight handlers,
+// then cancels their context and waits for them to return. Jobs interrupted
+// that way are released back to pending without an attempt penalty.
+func (r *Runner) Stop() { r.StopWithTimeout(DefaultStopGrace) }
+
+// StopWithTimeout is Stop with an explicit grace period.
+func (r *Runner) StopWithTimeout(grace time.Duration) {
 	r.mu.Lock()
-	cancel := r.stopLoop
+	cancel, cancelH := r.stopLoop, r.cancelHandlers
 	r.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-	r.wg.Wait()
+	done := make(chan struct{})
+	go func() { r.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(grace):
+		if cancelH != nil {
+			cancelH()
+		}
+		<-done
+	}
+	if cancelH != nil {
+		cancelH()
+	}
 }
 
 func (r *Runner) worker(loopCtx, handlerCtx context.Context, pool string, kinds []string) {
@@ -241,7 +266,11 @@ func (r *Runner) process(ctx context.Context, job *repository.Job) error {
 		return nil
 	}
 
-	hbCtx, stopHB := context.WithCancel(ctx)
+	// jctx is cancelled on shutdown (via ctx) or when the heartbeat finds the
+	// lease was taken over.
+	jctx, jcancel := context.WithCancelCause(ctx)
+	defer jcancel(nil)
+	hbCtx, stopHB := context.WithCancel(jctx)
 	hbDone := make(chan struct{})
 	go func() {
 		defer close(hbDone)
@@ -254,18 +283,34 @@ func (r *Runner) process(ctx context.Context, job *repository.Job) error {
 			case <-t.C:
 				now := r.clk.Now()
 				err := r.st.WithTx(wctx, func(tx *sql.Tx) error {
-					return r.repo.ExtendLease(wctx, tx, job.ID, now.Add(leaseDuration), now)
+					return r.repo.ExtendLease(wctx, tx, job.ID, job.Attempts, now.Add(leaseDuration), now)
 				})
+				if errors.Is(err, repository.ErrNotFound) {
+					jcancel(errLeaseLost)
+					return
+				}
 				if err != nil {
 					r.log.Warn("jobs: heartbeat failed", "kind", job.Kind, "id", job.ID, "err", err)
 				}
 			}
 		}
 	}()
-	herr := runHandler(ctx, reg.h, payloadBytes(job.Payload))
+	herr := runHandler(jctx, reg.h, payloadBytes(job.Payload))
 	stopHB()
 	<-hbDone
 
+	if errors.Is(context.Cause(jctx), errLeaseLost) {
+		r.log.Warn("jobs: lease lost during handler, outcome discarded", "kind", job.Kind, "id", job.ID)
+		return nil
+	}
+	if herr != nil && ctx.Err() != nil {
+		// Interrupted by shutdown: hand the job back, no attempt penalty.
+		now := r.clk.Now()
+		r.record(job, "release", r.st.WithTx(wctx, func(tx *sql.Tx) error {
+			return r.repo.Release(wctx, tx, job.ID, job.Attempts, now, now)
+		}))
+		return herr
+	}
 	if herr == nil {
 		r.record(job, "complete", r.st.WithTx(wctx, func(tx *sql.Tx) error {
 			return r.repo.Complete(wctx, tx, job.ID, job.Attempts, r.clk.Now())

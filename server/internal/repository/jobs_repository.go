@@ -89,10 +89,19 @@ func (JobsRepository) LeaseNext(ctx context.Context, db queries.DBTX, kinds []st
 	return &j, nil
 }
 
-// ExtendLease pushes a running job's lease out to leaseUntil.
-func (JobsRepository) ExtendLease(ctx context.Context, db queries.DBTX, id string, leaseUntil, now time.Time) error {
+// ExtendLease pushes a running job's lease out to leaseUntil. attempts
+// identifies the lease as for Complete; ErrNotFound means the lease was lost.
+func (JobsRepository) ExtendLease(ctx context.Context, db queries.DBTX, id string, attempts int, leaseUntil, now time.Time) error {
 	lu := formatTime(leaseUntil)
-	return requireRow(queries.New(db).ExtendJobLease(ctx, queries.ExtendJobLeaseParams{LeaseUntil: &lu, UpdatedAt: formatTime(now), ID: id}))
+	return requireRow(queries.New(db).ExtendJobLease(ctx, queries.ExtendJobLeaseParams{LeaseUntil: &lu, UpdatedAt: formatTime(now), ID: id, Attempts: int64(attempts)}))
+}
+
+// Release returns a running job to pending without penalty: the attempt the
+// lease consumed is refunded. It is for jobs interrupted by shutdown.
+func (JobsRepository) Release(ctx context.Context, db queries.DBTX, id string, attempts int, runAfter, at time.Time) error {
+	return requireRow(queries.New(db).ReleaseJob(ctx, queries.ReleaseJobParams{
+		RunAfter: formatTime(runAfter), UpdatedAt: formatTime(at), ID: id, Attempts: int64(attempts),
+	}))
 }
 
 // Complete marks the job done. attempts is the Attempts value returned by the

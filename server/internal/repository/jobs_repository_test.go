@@ -81,7 +81,7 @@ func TestJobsLeaseFailDeadCounts(t *testing.T) {
 		t.Fatalf("future job must not lease: %+v", j3)
 	}
 
-	if err := r.ExtendLease(ctx, s.W, "j1", ts.Add(5*time.Minute), ts); err != nil {
+	if err := r.ExtendLease(ctx, s.W, "j1", 1, ts.Add(5*time.Minute), ts); err != nil {
 		t.Fatal(err)
 	}
 	// j2's lease expires; it is re-leased once the lease passes. j1 was extended.
@@ -200,5 +200,32 @@ func TestJobsStaleWorkerCannotClobberReLease(t *testing.T) {
 	// A completed job cannot be failed or killed afterwards.
 	if err := r.Dead(ctx, s.W, "j1", second.Attempts, "x", ts); !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("Dead after done: %v", err)
+	}
+}
+
+func TestJobsReleaseAndGuardedExtend(t *testing.T) {
+	ctx := context.Background()
+	s := repotest.NewStore(t)
+	r := repository.JobsRepository{}
+	if _, err := r.Enqueue(ctx, s.W, newJob("j1", "thumb", "a")); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := r.LeaseNext(ctx, s.W, []string{"thumb"}, ts, ts.Add(time.Minute))
+	second, _ := r.LeaseNext(ctx, s.W, []string{"thumb"}, ts.Add(2*time.Minute), ts.Add(10*time.Minute))
+	if first == nil || second == nil || second.Attempts != 2 {
+		t.Fatalf("leases: %+v %+v", first, second)
+	}
+	if err := r.ExtendLease(ctx, s.W, "j1", first.Attempts, ts.Add(time.Hour), ts); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("stale ExtendLease: %v", err)
+	}
+	if err := r.Release(ctx, s.W, "j1", first.Attempts, ts, ts); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("stale Release: %v", err)
+	}
+	if err := r.Release(ctx, s.W, "j1", second.Attempts, ts, ts); err != nil {
+		t.Fatal(err)
+	}
+	pend, _ := r.ListPending(ctx, s.R, "thumb")
+	if len(pend) != 1 || pend[0].State != "pending" || pend[0].Attempts != 1 || pend[0].LeaseUntil != nil {
+		t.Fatalf("after release: %+v", pend)
 	}
 }
