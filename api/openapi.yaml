@@ -99,6 +99,13 @@ paths:
       description: Only succeeds while the server has no users; afterwards returns 409 `setup_already_done`.
       tags: [auth]
       security: []
+      parameters:
+        - name: PicTunnel-Setup-Token
+          in: header
+          required: false
+          description: First-run setup token printed once to the server log and stdout. Not required on the loopback listener; required on any other listener, where a missing or wrong token returns 403 `forbidden`.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -114,6 +121,8 @@ paths:
                 $ref: "#/components/schemas/SetupResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
         "429":
@@ -414,6 +423,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "409":
           $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
         "426":
@@ -451,6 +462,8 @@ paths:
           description: Missing or invalid credentials.
         "404":
           description: Unknown or expired upload; restart with createUpload.
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
     patch:
       operationId: appendUpload
       summary: Append bytes at the current offset
@@ -494,6 +507,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
         "423":
           $ref: "#/components/responses/Locked"
         "429":
@@ -517,6 +532,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
   /api/v1/assets/{asset_id}:
     parameters:
       - $ref: "#/components/parameters/AssetId"
@@ -927,6 +944,17 @@ components:
             $ref: "#/components/schemas/Problem"
     Conflict:
       description: "Codes: `length_mismatch`, `tombstoned`, `pair_primary_missing`, `setup_already_done`."
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PreconditionFailed:
+      description: "`Tus-Resumable` is missing or unsupported. Code: `invalid_request`. `Tus-Version` lists the supported versions."
+      headers:
+        Tus-Version:
+          schema:
+            type: string
+            example: 1.0.0
       content:
         application/problem+json:
           schema:

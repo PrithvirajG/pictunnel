@@ -130,6 +130,8 @@ Prefixes make leaked tokens detectable by secret scanners. Opaque tokens (not JW
 4. `POST /pairing/redeem {code, device: {device_name, platform, app_version}}` → `201 {server_id, user, device, tokens}`.
 5. Manual setup without QR: user enters a URL and logs in; for a self-signed certificate the app shows the fingerprint's first 16 chars for comparison with the server's admin page (trust on first use) and then pins it.
 
+**Setup hijack guard.** `POST /auth/setup` on the loopback listener is accepted as-is. On any other listener it MUST carry `PicTunnel-Setup-Token`, the one-time token the server prints to its log and stdout on first boot. A missing or wrong token returns `403 forbidden`.
+
 ### 6.4 Discovery and transport
 - mDNS service `_pictunnel._tcp.local.`; TXT `sid`, `v` (server version), `api=1`, `fp16` (first 16 chars of `fp`). No secrets.
 - Default listeners: HTTPS `:8443` (all interfaces); HTTP `127.0.0.1:8080` for the local first-run page only.

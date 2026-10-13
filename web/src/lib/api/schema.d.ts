@@ -817,6 +817,16 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description `Tus-Resumable` is missing or unsupported. Code: `invalid_request`. `Tus-Version` lists the supported versions. */
+        PreconditionFailed: {
+            headers: {
+                "Tus-Version"?: string;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description The cursor is older than the change-log retention. Code: `cursor_expired`. */
         Gone: {
             headers: {
@@ -1019,7 +1029,10 @@ export interface operations {
     setupFirstAdmin: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description First-run setup token printed once to the server log and stdout. Not required on the loopback listener; required on any other listener, where a missing or wrong token returns 403 `forbidden`. */
+                "PicTunnel-Setup-Token"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1039,6 +1052,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -1359,6 +1373,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
             413: components["responses"]["PayloadTooLarge"];
             426: components["responses"]["UpgradeRequired"];
             429: components["responses"]["TooManyRequests"];
@@ -1412,6 +1427,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
         };
     };
     getUploadOffset: {
@@ -1451,6 +1467,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            412: components["responses"]["PreconditionFailed"];
         };
     };
     appendUpload: {
@@ -1497,6 +1514,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            412: components["responses"]["PreconditionFailed"];
             423: components["responses"]["Locked"];
             429: components["responses"]["TooManyRequests"];
             460: components["responses"]["ChecksumMismatch"];
