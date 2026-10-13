@@ -1,4 +1,8 @@
 -- name: EnqueueJob :execrows
+-- ON CONFLICT DO NOTHING is bare on purpose (it must cover the partial unique
+-- index on (kind, dedupe_key)), but it also swallows a primary-key collision on
+-- id. IDs are UUIDv7 so that cannot happen in practice; callers must not rely
+-- on a false return meaning "deduped" for a hand-picked id.
 INSERT INTO jobs (id, kind, dedupe_key, payload, state, attempts, max_attempts, run_after, lease_until, last_error, created_at, updated_at)
 VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, NULL, NULL, ?, ?)
 ON CONFLICT DO NOTHING;
@@ -18,13 +22,13 @@ RETURNING *;
 UPDATE jobs SET lease_until = ?, updated_at = ? WHERE id = ? AND state = 'running';
 
 -- name: CompleteJob :execrows
-UPDATE jobs SET state = 'done', lease_until = NULL, updated_at = ? WHERE id = ?;
+UPDATE jobs SET state = 'done', lease_until = NULL, updated_at = ? WHERE id = ? AND state = 'running' AND attempts = ?;
 
 -- name: FailJob :execrows
-UPDATE jobs SET state = 'pending', last_error = ?, run_after = ?, lease_until = NULL, updated_at = ? WHERE id = ?;
+UPDATE jobs SET state = 'pending', last_error = ?, run_after = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND state = 'running' AND attempts = ?;
 
 -- name: DeadJob :execrows
-UPDATE jobs SET state = 'dead', last_error = ?, lease_until = NULL, updated_at = ? WHERE id = ?;
+UPDATE jobs SET state = 'dead', last_error = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND state = 'running' AND attempts = ?;
 
 -- name: ListPendingJobs :many
 SELECT * FROM jobs WHERE kind = ? AND state IN ('pending', 'running') ORDER BY run_after, id;

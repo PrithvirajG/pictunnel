@@ -11,16 +11,17 @@ import (
 )
 
 const completeJob = `-- name: CompleteJob :execrows
-UPDATE jobs SET state = 'done', lease_until = NULL, updated_at = ? WHERE id = ?
+UPDATE jobs SET state = 'done', lease_until = NULL, updated_at = ? WHERE id = ? AND state = 'running' AND attempts = ?
 `
 
 type CompleteJobParams struct {
 	UpdatedAt string
 	ID        string
+	Attempts  int64
 }
 
 func (q *Queries) CompleteJob(ctx context.Context, arg CompleteJobParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, completeJob, arg.UpdatedAt, arg.ID)
+	result, err := q.db.ExecContext(ctx, completeJob, arg.UpdatedAt, arg.ID, arg.Attempts)
 	if err != nil {
 		return 0, err
 	}
@@ -28,17 +29,23 @@ func (q *Queries) CompleteJob(ctx context.Context, arg CompleteJobParams) (int64
 }
 
 const deadJob = `-- name: DeadJob :execrows
-UPDATE jobs SET state = 'dead', last_error = ?, lease_until = NULL, updated_at = ? WHERE id = ?
+UPDATE jobs SET state = 'dead', last_error = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND state = 'running' AND attempts = ?
 `
 
 type DeadJobParams struct {
 	LastError *string
 	UpdatedAt string
 	ID        string
+	Attempts  int64
 }
 
 func (q *Queries) DeadJob(ctx context.Context, arg DeadJobParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deadJob, arg.LastError, arg.UpdatedAt, arg.ID)
+	result, err := q.db.ExecContext(ctx, deadJob,
+		arg.LastError,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.Attempts,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -62,6 +69,10 @@ type EnqueueJobParams struct {
 	UpdatedAt   string
 }
 
+// ON CONFLICT DO NOTHING is bare on purpose (it must cover the partial unique
+// index on (kind, dedupe_key)), but it also swallows a primary-key collision on
+// id. IDs are UUIDv7 so that cannot happen in practice; callers must not rely
+// on a false return meaning "deduped" for a hand-picked id.
 func (q *Queries) EnqueueJob(ctx context.Context, arg EnqueueJobParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, enqueueJob,
 		arg.ID,
@@ -98,7 +109,7 @@ func (q *Queries) ExtendJobLease(ctx context.Context, arg ExtendJobLeaseParams) 
 }
 
 const failJob = `-- name: FailJob :execrows
-UPDATE jobs SET state = 'pending', last_error = ?, run_after = ?, lease_until = NULL, updated_at = ? WHERE id = ?
+UPDATE jobs SET state = 'pending', last_error = ?, run_after = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND state = 'running' AND attempts = ?
 `
 
 type FailJobParams struct {
@@ -106,6 +117,7 @@ type FailJobParams struct {
 	RunAfter  string
 	UpdatedAt string
 	ID        string
+	Attempts  int64
 }
 
 func (q *Queries) FailJob(ctx context.Context, arg FailJobParams) (int64, error) {
@@ -114,6 +126,7 @@ func (q *Queries) FailJob(ctx context.Context, arg FailJobParams) (int64, error)
 		arg.RunAfter,
 		arg.UpdatedAt,
 		arg.ID,
+		arg.Attempts,
 	)
 	if err != nil {
 		return 0, err

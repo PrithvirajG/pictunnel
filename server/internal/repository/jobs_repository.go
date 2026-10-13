@@ -95,21 +95,24 @@ func (JobsRepository) ExtendLease(ctx context.Context, db queries.DBTX, id strin
 	return requireRow(queries.New(db).ExtendJobLease(ctx, queries.ExtendJobLeaseParams{LeaseUntil: &lu, UpdatedAt: formatTime(now), ID: id}))
 }
 
-// Complete marks the job done.
-func (JobsRepository) Complete(ctx context.Context, db queries.DBTX, id string, at time.Time) error {
-	return requireRow(queries.New(db).CompleteJob(ctx, queries.CompleteJobParams{UpdatedAt: formatTime(at), ID: id}))
+// Complete marks the job done. attempts is the Attempts value returned by the
+// LeaseNext call that claimed the job; it identifies the lease, so a late
+// worker whose lease expired and was re-taken gets ErrNotFound instead of
+// clobbering the new lease. The same applies to Fail and Dead.
+func (JobsRepository) Complete(ctx context.Context, db queries.DBTX, id string, attempts int, at time.Time) error {
+	return requireRow(queries.New(db).CompleteJob(ctx, queries.CompleteJobParams{UpdatedAt: formatTime(at), ID: id, Attempts: int64(attempts)}))
 }
 
 // Fail returns the job to pending with the error recorded, to run again at runAfter.
-func (JobsRepository) Fail(ctx context.Context, db queries.DBTX, id, errText string, runAfter, at time.Time) error {
+func (JobsRepository) Fail(ctx context.Context, db queries.DBTX, id string, attempts int, errText string, runAfter, at time.Time) error {
 	return requireRow(queries.New(db).FailJob(ctx, queries.FailJobParams{
-		LastError: &errText, RunAfter: formatTime(runAfter), UpdatedAt: formatTime(at), ID: id,
+		LastError: &errText, RunAfter: formatTime(runAfter), UpdatedAt: formatTime(at), ID: id, Attempts: int64(attempts),
 	}))
 }
 
 // Dead marks the job permanently failed.
-func (JobsRepository) Dead(ctx context.Context, db queries.DBTX, id, errText string, at time.Time) error {
-	return requireRow(queries.New(db).DeadJob(ctx, queries.DeadJobParams{LastError: &errText, UpdatedAt: formatTime(at), ID: id}))
+func (JobsRepository) Dead(ctx context.Context, db queries.DBTX, id string, attempts int, errText string, at time.Time) error {
+	return requireRow(queries.New(db).DeadJob(ctx, queries.DeadJobParams{LastError: &errText, UpdatedAt: formatTime(at), ID: id, Attempts: int64(attempts)}))
 }
 
 // ListPending returns the pending and running jobs of a kind.

@@ -2,6 +2,7 @@ package repository_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func TestJobsEnqueueDedupeAndReenqueue(t *testing.T) {
 	if ins, _ := r.Enqueue(ctx, s.W, newJob("j4", "thumb", "a1")); ins {
 		t.Fatal("duplicate while running must not insert")
 	}
-	if err := r.Complete(ctx, s.W, "j1", ts); err != nil {
+	if err := r.Complete(ctx, s.W, "j1", 1, ts); err != nil {
 		t.Fatal(err)
 	}
 	if ins, _ := r.Enqueue(ctx, s.W, newJob("j5", "thumb", "a1")); !ins {
@@ -90,7 +91,7 @@ func TestJobsLeaseFailDeadCounts(t *testing.T) {
 	}
 
 	later := ts.Add(10 * time.Minute)
-	if err := r.Fail(ctx, s.W, "j1", "boom", later, ts.Add(time.Second)); err != nil {
+	if err := r.Fail(ctx, s.W, "j1", 1, "boom", later, ts.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := r.LeaseNext(ctx, s.W, []string{"thumb"}, ts.Add(5*time.Minute), ts.Add(6*time.Minute)); got != nil {
@@ -100,7 +101,7 @@ func TestJobsLeaseFailDeadCounts(t *testing.T) {
 	if got == nil || got.ID != "j1" || got.LastError == nil || *got.LastError != "boom" || got.Attempts != 2 {
 		t.Fatalf("retry: %+v", got)
 	}
-	if err := r.Dead(ctx, s.W, "j2", "gave up", ts); err != nil {
+	if err := r.Dead(ctx, s.W, "j2", 2, "gave up", ts); err != nil {
 		t.Fatal(err)
 	}
 	counts, err := r.Counts(ctx, s.R)
@@ -160,5 +161,44 @@ func TestJobsLeaseNextConcurrentNoDuplicates(t *testing.T) {
 		if n != 1 {
 			t.Fatalf("job %s leased %d times", id, n)
 		}
+	}
+}
+
+func TestJobsStaleWorkerCannotClobberReLease(t *testing.T) {
+	ctx := context.Background()
+	s := repotest.NewStore(t)
+	r := repository.JobsRepository{}
+	if _, err := r.Enqueue(ctx, s.W, newJob("j1", "thumb", "a")); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := r.LeaseNext(ctx, s.W, []string{"thumb"}, ts, ts.Add(time.Minute))
+	if first == nil || first.Attempts != 1 {
+		t.Fatalf("lease 1: %+v", first)
+	}
+	// Lease expires; a second worker re-leases the job.
+	second, _ := r.LeaseNext(ctx, s.W, []string{"thumb"}, ts.Add(2*time.Minute), ts.Add(10*time.Minute))
+	if second == nil || second.Attempts != 2 {
+		t.Fatalf("lease 2: %+v", second)
+	}
+	// The stale first worker's outcomes must all be rejected.
+	if err := r.Complete(ctx, s.W, "j1", first.Attempts, ts); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("stale Complete: %v", err)
+	}
+	if err := r.Fail(ctx, s.W, "j1", first.Attempts, "x", ts, ts); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("stale Fail: %v", err)
+	}
+	if err := r.Dead(ctx, s.W, "j1", first.Attempts, "x", ts); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("stale Dead: %v", err)
+	}
+	pend, _ := r.ListPending(ctx, s.R, "thumb")
+	if len(pend) != 1 || pend[0].State != "running" || pend[0].Attempts != 2 {
+		t.Fatalf("re-lease clobbered: %+v", pend)
+	}
+	if err := r.Complete(ctx, s.W, "j1", second.Attempts, ts); err != nil {
+		t.Fatalf("current Complete: %v", err)
+	}
+	// A completed job cannot be failed or killed afterwards.
+	if err := r.Dead(ctx, s.W, "j1", second.Attempts, "x", ts); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("Dead after done: %v", err)
 	}
 }
