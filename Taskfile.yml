@@ -75,6 +75,18 @@ tasks:
       - go tool oapi-codegen -config oapi-codegen.yaml ../../../api/openapi.yaml
       - go mod tidy
 
+  gen:sqlc:
+    desc: Generate Go query code from SQL with sqlc
+    dir: server
+    cmds:
+      - go tool sqlc generate -f internal/store/sqlc.yaml
+
+  check:sqlc:
+    desc: Fail if sqlc output differs from the SQL sources
+    dir: server
+    cmds:
+      - go tool sqlc diff -f internal/store/sqlc.yaml
+
   gen:ts:
     desc: Generate TypeScript types for the web viewer
     cmds:
@@ -183,6 +195,7 @@ tasks:
     desc: Regenerate every client from api/openapi.yaml
     cmds:
       - task: gen:go
+      - task: gen:sqlc
       - task: gen:ts
       - task: gen:kotlin
       - task: gen:swift
