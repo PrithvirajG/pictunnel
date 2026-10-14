@@ -15,7 +15,7 @@ type Device struct {
 	Platform   string
 	AppVersion string
 	CreatedAt  time.Time
-	LastSeenAt time.Time
+	LastSeenAt *time.Time // nil until the first authenticated request
 	RevokedAt  *time.Time
 }
 
@@ -23,7 +23,11 @@ type Device struct {
 type DevicesRepository struct{}
 
 func deviceFromRow(r queries.Device) (Device, error) {
-	ts, err := parseTimes(r.CreatedAt, r.LastSeenAt)
+	created, err := parseTime(r.CreatedAt)
+	if err != nil {
+		return Device{}, err
+	}
+	seen, err := parseTimePtr(r.LastSeenAt)
 	if err != nil {
 		return Device{}, err
 	}
@@ -33,7 +37,7 @@ func deviceFromRow(r queries.Device) (Device, error) {
 	}
 	return Device{
 		ID: r.ID, UserID: r.UserID, Name: r.Name, Platform: r.Platform, AppVersion: r.AppVersion,
-		CreatedAt: ts[0], LastSeenAt: ts[1], RevokedAt: rev,
+		CreatedAt: created, LastSeenAt: seen, RevokedAt: rev,
 	}, nil
 }
 
@@ -41,7 +45,7 @@ func deviceFromRow(r queries.Device) (Device, error) {
 func (DevicesRepository) Insert(ctx context.Context, db queries.DBTX, d Device) error {
 	return mapErr(queries.New(db).InsertDevice(ctx, queries.InsertDeviceParams{
 		ID: d.ID, UserID: d.UserID, Name: d.Name, Platform: d.Platform, AppVersion: d.AppVersion,
-		CreatedAt: formatTime(d.CreatedAt), LastSeenAt: formatTime(d.LastSeenAt), RevokedAt: formatTimePtr(d.RevokedAt),
+		CreatedAt: formatTime(d.CreatedAt), LastSeenAt: formatTimePtr(d.LastSeenAt), RevokedAt: formatTimePtr(d.RevokedAt),
 	}))
 }
 
@@ -84,5 +88,5 @@ func (DevicesRepository) Revoke(ctx context.Context, db queries.DBTX, id string,
 
 // TouchLastSeen updates last_seen_at.
 func (DevicesRepository) TouchLastSeen(ctx context.Context, db queries.DBTX, id string, at time.Time) error {
-	return requireRow(queries.New(db).TouchDeviceLastSeen(ctx, queries.TouchDeviceLastSeenParams{LastSeenAt: formatTime(at), ID: id}))
+	return requireRow(queries.New(db).TouchDeviceLastSeen(ctx, queries.TouchDeviceLastSeenParams{LastSeenAt: formatTimePtr(&at), ID: id}))
 }

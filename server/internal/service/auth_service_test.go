@@ -286,7 +286,7 @@ func TestBearerDoesNotWrite(t *testing.T) {
 	e.clk.Advance(5 * time.Minute)
 	e.principal(t, tp.AccessToken)
 	dev, err := repository.DevicesRepository{}.Get(ctx, e.st.R, d.ID)
-	if err != nil || !dev.LastSeenAt.Equal(t0) {
+	if err != nil || dev.LastSeenAt != nil {
 		t.Fatalf("last_seen_at = %v, %v; AuthenticateBearer must not write", dev.LastSeenAt, err)
 	}
 }
@@ -392,5 +392,29 @@ func TestLogoutBearer(t *testing.T) {
 	dev, err := repository.DevicesRepository{}.Get(ctx, e.st.R, d.ID)
 	if err != nil || dev.RevokedAt == nil {
 		t.Fatalf("device after logout = %+v, %v", dev, err)
+	}
+}
+
+func TestNewAuthServiceRequires32ByteSecret(t *testing.T) {
+	for _, n := range []int{0, 16, 31, 33, 64} {
+		if _, err := NewAuthService(AuthServiceDeps{Secret: make([]byte, n)}); err == nil {
+			t.Errorf("secret of %d bytes accepted", n)
+		}
+	}
+	if _, err := NewAuthService(AuthServiceDeps{Secret: make([]byte, 32)}); err != nil {
+		t.Fatalf("32-byte secret rejected: %v", err)
+	}
+}
+
+func TestCheckCSRFFailsClosed(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	for _, p := range []Principal{{}, {Via: "other"}, {Via: ViaCookie}} {
+		if e.auth.CheckCSRF(ctx, p, "anything") {
+			t.Fatalf("CheckCSRF(%+v) = true, want false", p)
+		}
+	}
+	if !e.auth.CheckCSRF(ctx, Principal{Via: ViaBearer}, "") {
+		t.Fatal("bearer principal rejected")
 	}
 }

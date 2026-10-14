@@ -41,7 +41,7 @@ type InsertDeviceParams struct {
 	Platform   string
 	AppVersion string
 	CreatedAt  string
-	LastSeenAt string
+	LastSeenAt *string
 	RevokedAt  *string
 }
 
@@ -134,7 +134,7 @@ UPDATE devices SET last_seen_at = ? WHERE id = ?
 `
 
 type TouchDeviceLastSeenParams struct {
-	LastSeenAt string
+	LastSeenAt *string
 	ID         string
 }
 

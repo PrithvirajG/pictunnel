@@ -125,7 +125,7 @@ Design notes:
 ### 4.1 First-run setup
 - `setupFirstAdmin` succeeds only while `users` is empty (checked in the write transaction); afterwards it returns `409 setup_already_done`.
 - **Hijack guard (contract addition).** A request arriving on the loopback listener is accepted as-is. Any other request must carry `PicTunnel-Setup-Token`. That token is generated on first boot, printed once to the log and stdout, and stored as a hash in `server_state`. A missing or wrong token returns `403 forbidden`. This makes Docker and headless setup work without letting the first LAN visitor claim admin. The OpenAPI gains the optional header (an additive change).
-- Passwords are hashed with argon2id (`x/crypto/argon2`; m=64 MiB, t=3, p=2, 16-byte salt, PHC string). Minimum length is 10. The username is NFC-normalized and must match `^[a-z0-9][a-z0-9._-]{1,31}$`. `slug` equals the lowercased username and is used as the library folder.
+- Passwords are hashed with argon2id (`x/crypto/argon2`; m=64 MiB, t=3, p=2, 16-byte salt, PHC string). Minimum length is 10. The username is NFC-normalized and must match `^[a-z0-9][a-z0-9._-]{2,31}$` (3–32 characters). `slug` equals the lowercased username and is used as the library folder.
 
 ### 4.2 Tokens (§6.1 and §6.2)
 - Each token is 32 bytes from `crypto/rand`, base64url, prefixed `pt_at_`, `pt_rt_` or `pt_ws_`. Only the SHA-256 is stored.

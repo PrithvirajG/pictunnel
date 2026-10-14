@@ -47,28 +47,36 @@ func newEnv(t *testing.T) *env {
 func newEnvOn(t *testing.T, st *store.Store, clk *clocktest.Fake) *env {
 	t.Helper()
 	e := &env{st: st, clk: clk}
-	e.users = NewUserService(UserServiceDeps{
-		Store: st, Users: repository.UsersRepository{}, ServerState: repository.ServerStateRepository{},
-		Audit: repository.AuditLogRepository{}, Clock: clk,
-	})
-	e.auth = NewAuthService(AuthServiceDeps{
+	var err error
+	e.auth, err = NewAuthService(AuthServiceDeps{
 		Store: st, Users: repository.UsersRepository{}, Devices: repository.DevicesRepository{},
 		AccessTokens: repository.AccessTokensRepository{}, RefreshTokens: repository.RefreshTokensRepository{},
 		WebSessions: repository.WebSessionsRepository{}, Audit: repository.AuditLogRepository{},
 		Clock: clk, Secret: testSecret,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.users = NewUserService(UserServiceDeps{
+		Store: st, Users: repository.UsersRepository{}, ServerState: repository.ServerStateRepository{},
+		Devices: repository.DevicesRepository{}, Audit: repository.AuditLogRepository{}, Auth: e.auth, Clock: clk,
+	})
 	e.devices = NewDeviceService(DeviceServiceDeps{
 		Store: st, Devices: repository.DevicesRepository{}, Auth: e.auth, Clock: clk,
 	})
-	e.pairing = NewPairingService(PairingServiceDeps{
+	e.pairing, err = NewPairingService(PairingServiceDeps{
 		Store: st, PairingCodes: repository.PairingCodesRepository{}, Devices: repository.DevicesRepository{},
-		Users: repository.UsersRepository{}, Auth: e.auth, Clock: clk,
+		Users: repository.UsersRepository{}, Audit: repository.AuditLogRepository{}, Auth: e.auth, Clock: clk,
+		Secret:      testSecret,
 		ServerID:    "01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f",
 		Fingerprint: "xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc",
 		Endpoints: func() []string {
 			return []string{"https://192.168.1.20:8443", "https://photos.example.com", "https://192.168.1.20:8443"}
 		},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	return e
 }
 

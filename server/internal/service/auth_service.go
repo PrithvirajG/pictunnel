@@ -1,9 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -42,9 +44,24 @@ type AuthService struct {
 	dummyHash string
 }
 
-// NewAuthService returns an AuthService.
-func NewAuthService(d AuthServiceDeps) *AuthService {
-	return &AuthService{d: d, secret: d.Secret}
+// SecretLen is the required length of the server secret k (ADR 0012).
+const SecretLen = 32
+
+func checkSecret(secret []byte) error {
+	if len(secret) != SecretLen {
+		return fmt.Errorf("service: server secret must be %d bytes, got %d", SecretLen, len(secret))
+	}
+	return nil
+}
+
+// NewAuthService returns an AuthService. The secret must be exactly 32
+// bytes; it is copied.
+func NewAuthService(d AuthServiceDeps) (*AuthService, error) {
+	if err := checkSecret(d.Secret); err != nil {
+		return nil, err
+	}
+	d.Secret = bytes.Clone(d.Secret)
+	return &AuthService{d: d, secret: d.Secret}, nil
 }
 
 // webDeviceName names the device a cookie login creates.
@@ -77,7 +94,7 @@ func (s *AuthService) checkPassword(ctx context.Context, username, password stri
 func (s *AuthService) insertDevice(ctx context.Context, db queries.DBTX, userID string, dev DeviceInfo, now time.Time) (repository.Device, error) {
 	d := repository.Device{
 		ID: ids.New(), UserID: userID, Name: dev.Name, Platform: dev.Platform, AppVersion: dev.AppVersion,
-		CreatedAt: now, LastSeenAt: now,
+		CreatedAt: now,
 	}
 	return d, s.d.Devices.Insert(ctx, db, d)
 }
@@ -357,10 +374,15 @@ func (s *AuthService) AuthenticateCookie(ctx context.Context, token string) (Pri
 }
 
 // CheckCSRF reports whether csrf matches the cookie session's CSRF token,
-// compared in constant time. Bearer principals need no CSRF token.
+// compared in constant time. Bearer principals need no CSRF token; any
+// other principal (including the zero value) fails closed.
 func (s *AuthService) CheckCSRF(ctx context.Context, p Principal, csrf string) bool {
-	if p.Via != ViaCookie {
+	switch p.Via {
+	case ViaBearer:
 		return true
+	case ViaCookie:
+	default:
+		return false
 	}
 	if csrf == "" || p.SessionHash == "" {
 		return false

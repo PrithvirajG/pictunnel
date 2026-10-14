@@ -103,7 +103,13 @@ func TestTouchLastSeenCoalesced(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return dev.LastSeenAt
+		if dev.LastSeenAt == nil {
+			return time.Time{}
+		}
+		return *dev.LastSeenAt
+	}
+	if d.LastSeenAt != nil || !get().IsZero() {
+		t.Fatalf("new device last_seen_at = %v, want NULL", d.LastSeenAt)
 	}
 	e.clk.Advance(5 * time.Second)
 	if err := e.devices.TouchLastSeen(ctx, d.ID); err != nil {

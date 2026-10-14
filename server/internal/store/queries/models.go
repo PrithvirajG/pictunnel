@@ -71,7 +71,7 @@ type Device struct {
 	Platform   string
 	AppVersion string
 	CreatedAt  string
-	LastSeenAt string
+	LastSeenAt *string
 	RevokedAt  *string
 }
 

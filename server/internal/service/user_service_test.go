@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/PrithvirajG/pictunnel/server/internal/repository"
 )
 
 func TestSetupTwice(t *testing.T) {
@@ -29,6 +32,8 @@ func TestSetupValidation(t *testing.T) {
 	for _, c := range []struct{ name, user, pw string }{
 		{"short password", "alice", "123456789"},
 		{"too short username", "a", testPassword},
+		{"two chars a1", "a1", testPassword},
+		{"two chars ab", "ab", testPassword},
 		{"uppercase", "Alice", testPassword},
 		{"leading dot", ".alice", testPassword},
 		{"space", "al ice", testPassword},
@@ -42,11 +47,11 @@ func TestSetupValidation(t *testing.T) {
 		})
 	}
 	// Boundary cases that are valid.
-	u, err := e.users.Setup(ctx, "a1", "0123456789", "")
+	u, err := e.users.Setup(ctx, "ab1", "0123456789", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.DisplayName != "a1" {
+	if u.DisplayName != "ab1" {
 		t.Fatalf("display name defaults to username, got %q", u.DisplayName)
 	}
 }
@@ -124,5 +129,38 @@ func TestEnsureSetupTokenSkippedAfterSetup(t *testing.T) {
 	tok, created, err := e.users.EnsureSetupToken(ctx)
 	if err != nil || created || tok != "" {
 		t.Fatalf("EnsureSetupToken after setup = %q, %v, %v", tok, created, err)
+	}
+}
+
+func TestResetPasswordRevokesDevices(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, d, tp := e.setupAlice(t)
+	_, _, sess, csrf, _, err := e.auth.LoginCookie(ctx, "alice", testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp, err := e.auth.AuthenticateCookie(ctx, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.users.ResetPassword(ctx, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.auth.AuthenticateBearer(ctx, tp.AccessToken)
+	wantCode(t, err, "unauthorized")
+	_, err = e.auth.Refresh(ctx, tp.RefreshToken)
+	wantCode(t, err, "unauthorized")
+	_, err = e.auth.AuthenticateCookie(ctx, sess)
+	wantCode(t, err, "unauthorized")
+	if e.auth.CheckCSRF(ctx, cp, csrf) {
+		t.Fatal("CSRF accepted after the session was revoked")
+	}
+	if _, err := (repository.WebSessionsRepository{}).Get(ctx, e.st.R, hashToken(sess)); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("web session row still present: %v", err)
+	}
+	dev, err := repository.DevicesRepository{}.Get(ctx, e.st.R, d.ID)
+	if err != nil || dev.RevokedAt == nil {
+		t.Fatalf("device not revoked: %+v, %v", dev, err)
 	}
 }

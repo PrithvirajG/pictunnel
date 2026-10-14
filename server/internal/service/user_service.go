@@ -25,7 +25,9 @@ type UserServiceDeps struct {
 	Store       *store.Store
 	Users       repository.UsersRepository
 	ServerState repository.ServerStateRepository
+	Devices     repository.DevicesRepository
 	Audit       repository.AuditLogRepository
+	Auth        *AuthService
 	Clock       clock.Clock
 }
 
@@ -44,13 +46,13 @@ const (
 	maxDisplayNameLen = 100
 )
 
-var usernameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,31}$`)
+var usernameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{2,31}$`)
 
 // normalizeUsername NFC-normalizes and validates a username.
 func normalizeUsername(username string) (string, error) {
 	u := norm.NFC.String(username)
 	if !usernameRe.MatchString(u) {
-		return "", apperr.InvalidRequest("username must match ^[a-z0-9][a-z0-9._-]{1,31}$")
+		return "", apperr.InvalidRequest("username must match ^[a-z0-9][a-z0-9._-]{2,31}$")
 	}
 	return u, nil
 }
@@ -144,7 +146,8 @@ func (s *UserService) Create(ctx context.Context, username, password, displayNam
 }
 
 // ResetPassword replaces the user's password with a random one and returns
-// it. Existing device tokens stay valid.
+// it. In the same transaction every device of the user is revoked, which
+// ends all of their token families and web sessions.
 func (s *UserService) ResetPassword(ctx context.Context, username string) (string, error) {
 	pw := randomB64(15) // 20 characters, 120 bits
 	hash, err := hashPassword(pw)
@@ -162,7 +165,16 @@ func (s *UserService) ResetPassword(ctx context.Context, username string) (strin
 		if err := s.d.Users.SetPasswordHash(ctx, tx, u.ID, hash); err != nil {
 			return err
 		}
-		return s.d.Audit.Append(ctx, tx, auditEvent(msNow(s.d.Clock.Now()), u.ID, "", "user.password_reset", nil))
+		devs, err := s.d.Devices.ListByUser(ctx, tx, u.ID)
+		if err != nil {
+			return err
+		}
+		for _, d := range devs {
+			if err := s.d.Auth.RevokeDevice(ctx, tx, d.ID); err != nil {
+				return err
+			}
+		}
+		return s.d.Audit.Append(ctx, tx, auditEvent(msNow(s.d.Clock.Now()), u.ID, "", "user.password_reset", map[string]any{"devices_revoked": len(devs)}))
 	})
 	if err != nil {
 		return "", err

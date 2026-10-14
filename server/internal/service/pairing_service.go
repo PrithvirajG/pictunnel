@@ -1,9 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"net/url"
 	"strings"
@@ -19,17 +23,20 @@ import (
 
 // PairingServiceDeps are the PairingService dependencies. Fingerprint is the
 // leaf certificate's SPKI SHA-256 in base64url; Endpoints returns the QR `u`
-// values in preference order (LAN first, then remote).
+// values in preference order (LAN first, then remote). Secret is the 32-byte
+// server secret; codes are stored as HMAC-SHA256(Secret, canonical code).
 type PairingServiceDeps struct {
 	Store        *store.Store
 	PairingCodes repository.PairingCodesRepository
 	Devices      repository.DevicesRepository
 	Users        repository.UsersRepository
+	Audit        repository.AuditLogRepository
 	Auth         *AuthService
 	Clock        clock.Clock
 	ServerID     string
 	Fingerprint  string
 	Endpoints    func() []string
+	Secret       []byte
 }
 
 // PairingService creates and redeems pairing codes (S§4.3, P§6.3).
@@ -40,8 +47,23 @@ type PairingService struct {
 	failures int // server-wide failed redemptions since the last invalidation
 }
 
-// NewPairingService returns a PairingService.
-func NewPairingService(d PairingServiceDeps) *PairingService { return &PairingService{d: d} }
+// NewPairingService returns a PairingService. The secret must be exactly
+// 32 bytes; it is copied.
+func NewPairingService(d PairingServiceDeps) (*PairingService, error) {
+	if err := checkSecret(d.Secret); err != nil {
+		return nil, err
+	}
+	d.Secret = bytes.Clone(d.Secret)
+	return &PairingService{d: d}, nil
+}
+
+// codeHash is the stored form of a canonical pairing code:
+// hex HMAC-SHA256(server secret, code).
+func (s *PairingService) codeHash(code string) string {
+	m := hmac.New(sha256.New, s.d.Secret)
+	m.Write([]byte(code))
+	return hex.EncodeToString(m.Sum(nil))
+}
 
 const (
 	pairingCodeTTL     = 10 * time.Minute
@@ -88,14 +110,20 @@ func normalizePairingCode(in string) (string, bool) {
 }
 
 // Create issues a single-use pairing code for the caller with its QR URI.
+// With no endpoint to put in the QR URI it fails with internal before
+// storing a code.
 func (s *PairingService) Create(ctx context.Context, p Principal) (code, qrURI string, expiresAt time.Time, err error) {
+	eps := s.endpoints()
+	if len(eps) == 0 {
+		return "", "", time.Time{}, apperr.Internal()
+	}
 	now := msNow(s.d.Clock.Now())
 	expiresAt = now.Add(pairingCodeTTL)
 	for attempt := 0; ; attempt++ {
 		code = newPairingCode()
 		err = s.d.Store.WithTx(ctx, func(tx *sql.Tx) error {
 			return s.d.PairingCodes.Insert(ctx, tx, repository.PairingCode{
-				CodeHash: hashToken(code), UserID: p.UserID, CreatedAt: now, ExpiresAt: expiresAt,
+				CodeHash: s.codeHash(code), UserID: p.UserID, CreatedAt: now, ExpiresAt: expiresAt,
 			})
 		})
 		if err == nil {
@@ -105,12 +133,29 @@ func (s *PairingService) Create(ctx context.Context, p Principal) (code, qrURI s
 			return "", "", time.Time{}, err
 		}
 	}
-	return code, s.qrURI(code), expiresAt, nil
+	return code, s.qrURI(code, eps), expiresAt, nil
+}
+
+// endpoints returns the configured endpoints, empty ones and duplicates
+// removed, in order.
+func (s *PairingService) endpoints() []string {
+	if s.d.Endpoints == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, e := range s.d.Endpoints() {
+		if e != "" && !seen[e] {
+			seen[e] = true
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // qrURI builds pictunnel://pair?v=1&sid=…&code=…&fp=…&u=…&u=… (P§6.3) with
-// each endpoint URL-encoded, in order, duplicates removed.
-func (s *PairingService) qrURI(code string) string {
+// each endpoint URL-encoded and repeated in order.
+func (s *PairingService) qrURI(code string, endpoints []string) string {
 	var b strings.Builder
 	b.WriteString("pictunnel://pair?v=1&sid=")
 	b.WriteString(url.QueryEscape(s.d.ServerID))
@@ -118,16 +163,9 @@ func (s *PairingService) qrURI(code string) string {
 	b.WriteString(url.QueryEscape(code))
 	b.WriteString("&fp=")
 	b.WriteString(url.QueryEscape(s.d.Fingerprint))
-	if s.d.Endpoints != nil {
-		seen := map[string]bool{}
-		for _, e := range s.d.Endpoints() {
-			if e == "" || seen[e] {
-				continue
-			}
-			seen[e] = true
-			b.WriteString("&u=")
-			b.WriteString(url.QueryEscape(e))
-		}
+	for _, e := range endpoints {
+		b.WriteString("&u=")
+		b.WriteString(url.QueryEscape(e))
 	}
 	return b.String()
 }
@@ -143,7 +181,7 @@ func (s *PairingService) Redeem(ctx context.Context, code string, dev DeviceInfo
 	}
 	canon, ok := normalizePairingCode(code)
 	if !ok {
-		return repository.User{}, repository.Device{}, TokenPair{}, s.fail(ctx)
+		return repository.User{}, repository.Device{}, TokenPair{}, s.fail(ctx, "malformed")
 	}
 	var u repository.User
 	var d repository.Device
@@ -151,7 +189,7 @@ func (s *PairingService) Redeem(ctx context.Context, code string, dev DeviceInfo
 	failed := false
 	err = s.d.Store.WithTx(ctx, func(tx *sql.Tx) error {
 		now := msNow(s.d.Clock.Now())
-		h := hashToken(canon)
+		h := s.codeHash(canon)
 		redeemed, err := s.d.PairingCodes.MarkRedeemed(ctx, tx, h, now)
 		if err != nil {
 			return err
@@ -172,16 +210,18 @@ func (s *PairingService) Redeem(ctx context.Context, code string, dev DeviceInfo
 		}
 		d = repository.Device{
 			ID: ids.New(), UserID: u.ID, Name: dev.Name, Platform: dev.Platform, AppVersion: dev.AppVersion,
-			CreatedAt: now, LastSeenAt: now,
+			CreatedAt: now,
 		}
 		if err := s.d.Devices.Insert(ctx, tx, d); err != nil {
 			return err
 		}
-		tp, err = s.d.Auth.IssueForDevice(ctx, tx, d.ID)
-		return err
+		if tp, err = s.d.Auth.IssueForDevice(ctx, tx, d.ID); err != nil {
+			return err
+		}
+		return s.d.Audit.Append(ctx, tx, auditEvent(now, u.ID, d.ID, "pairing.redeemed", nil))
 	})
 	if failed {
-		return repository.User{}, repository.Device{}, TokenPair{}, s.fail(ctx)
+		return repository.User{}, repository.Device{}, TokenPair{}, s.fail(ctx, "invalid")
 	}
 	if err != nil {
 		return repository.User{}, repository.Device{}, TokenPair{}, err
@@ -189,19 +229,28 @@ func (s *PairingService) Redeem(ctx context.Context, code string, dev DeviceInfo
 	return u, d, tp, nil
 }
 
-// fail records a failed redemption and returns the error for the caller.
-// At pairingMaxFailures it invalidates every outstanding code and resets
-// the counter; if that write fails the counter stays at the limit so the
-// next failure retries it.
-func (s *PairingService) fail(ctx context.Context) error {
+// fail records a failed redemption (reason "malformed" or "invalid") with an
+// audit event that never includes the code, and returns the error for the
+// caller. At pairingMaxFailures it invalidates every outstanding code and
+// resets the counter; if that write fails the counter stays at the limit so
+// the next failure retries it.
+func (s *PairingService) fail(ctx context.Context, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := msNow(s.d.Clock.Now())
 	s.failures++
+	var invalidated int64
 	if s.failures >= pairingMaxFailures {
-		if _, err := s.d.PairingCodes.InvalidateOutstanding(ctx, s.d.Store.W, msNow(s.d.Clock.Now())); err != nil {
+		n, err := s.d.PairingCodes.InvalidateOutstanding(ctx, s.d.Store.W, now)
+		if err != nil {
 			return err
 		}
+		invalidated = n
 		s.failures = 0
+	}
+	if err := s.d.Audit.Append(ctx, s.d.Store.W, auditEvent(now, "", "", "pairing.failed",
+		map[string]any{"reason": reason, "invalidated": invalidated})); err != nil {
+		return err
 	}
 	return apperr.PairingCodeInvalid()
 }

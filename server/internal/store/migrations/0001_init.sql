@@ -25,7 +25,7 @@ CREATE TABLE devices (
     platform     TEXT NOT NULL,
     app_version  TEXT NOT NULL,
     created_at   TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL,
+    last_seen_at TEXT,
     revoked_at   TEXT
 );
 CREATE INDEX devices_user_id_idx ON devices(user_id);
