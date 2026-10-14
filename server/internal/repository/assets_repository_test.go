@@ -155,3 +155,47 @@ func TestAssetsMutationsAndQueries(t *testing.T) {
 		t.Fatalf("after delete: %v", err)
 	}
 }
+
+func TestAssetsSetKindAndStackIDForKey(t *testing.T) {
+	ctx := context.Background()
+	s := repotest.NewStore(t)
+	repotest.SeedUser(t, s, "o1")
+	repotest.SeedUser(t, s, "o2")
+	r := repository.AssetsRepository{}
+	if _, ok, err := r.StackIDForKey(ctx, s.R, "o1", "k"); err != nil || ok {
+		t.Fatalf("empty: ok=%v err=%v", ok, err)
+	}
+	k := "k"
+	a := newAsset("a1", "o1", "s1")
+	a.StackKey = &k
+	b := newAsset("a2", "o1", "s2")
+	b.StackKey = &k
+	first := "a1"
+	b.StackID = &first
+	o := newAsset("a0", "o2", "s3")
+	o.StackKey = &k
+	for _, x := range []repository.Asset{a, b, o} {
+		if err := r.Insert(ctx, s.W, x); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if id, ok, err := r.StackIDForKey(ctx, s.R, "o1", "k"); err != nil || !ok || id != "a1" {
+		t.Fatalf("got %q %v %v", id, ok, err)
+	}
+	// After the first asset goes away the survivors keep the stack id.
+	if err := r.Delete(ctx, s.W, "a1"); err != nil {
+		t.Fatal(err)
+	}
+	if id, ok, err := r.StackIDForKey(ctx, s.R, "o1", "k"); err != nil || !ok || id != "a1" {
+		t.Fatalf("after delete got %q %v %v", id, ok, err)
+	}
+	if err := r.SetKind(ctx, s.W, "a2", "live_photo"); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := r.GetByID(ctx, s.R, "a2"); g.Kind != "live_photo" {
+		t.Fatalf("kind = %q", g.Kind)
+	}
+	if err := r.SetKind(ctx, s.W, "nope", "video"); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+}

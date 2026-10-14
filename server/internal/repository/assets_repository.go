@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/PrithvirajG/pictunnel/server/internal/store/queries"
@@ -227,4 +228,31 @@ func (AssetsRepository) Page(ctx context.Context, db queries.DBTX, ownerID, afte
 // SumSizes returns the total size_bytes of the owner's assets.
 func (AssetsRepository) SumSizes(ctx context.Context, db queries.DBTX, ownerID string) (int64, error) {
 	return queries.New(db).SumAssetSizes(ctx, ownerID)
+}
+
+// SetKind changes the asset kind (photo → live_photo when a live video is
+// attached). The caller stamps updated_seq after appending the change.
+func (AssetsRepository) SetKind(ctx context.Context, db queries.DBTX, id, kind string) error {
+	res, err := db.ExecContext(ctx, `UPDATE assets SET kind = ? WHERE id = ?`, kind, id)
+	if err != nil {
+		return mapErr(err)
+	}
+	return requireRow(res.RowsAffected())
+}
+
+// StackIDForKey returns the stack id for a new asset of the owner with
+// stackKey: the stack id of the oldest asset carrying that key (or that
+// asset's own id when it has none). ok is false when no asset has the key.
+func (AssetsRepository) StackIDForKey(ctx context.Context, db queries.DBTX, ownerID, stackKey string) (string, bool, error) {
+	var id string
+	err := db.QueryRowContext(ctx,
+		`SELECT COALESCE(stack_id, id) FROM assets WHERE owner_id = ? AND stack_key = ? ORDER BY id LIMIT 1`,
+		ownerID, stackKey).Scan(&id)
+	if err != nil {
+		if errors.Is(mapErr(err), ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return id, true, nil
 }

@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,5 +69,130 @@ func TestFreeSpace(t *testing.T) {
 	n, err := storage.FreeSpace(t.TempDir())
 	if err != nil || n == 0 {
 		t.Fatalf("%d %v", n, err)
+	}
+}
+
+func TestCommitCrossVolumePtpartCleanupOnRenameFailure(t *testing.T) {
+	d := t.TempDir()
+	src := filepath.Join(d, "a.part")
+	writeFile(t, src, "payload")
+	dest := filepath.Join(d, "lib", "a.jpg")
+	n := 0
+	ffs := &storagetest.FaultFS{FS: storage.OS(), RenameErr: func(from, to string) error {
+		n++
+		if n == 1 {
+			return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.EXDEV}
+		}
+		return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.EIO}
+	}}
+	if err := storage.Commit(ffs, src, dest); err == nil {
+		t.Fatal("Commit succeeded")
+	}
+	if _, err := os.Stat(dest + ".ptpart"); !os.IsNotExist(err) {
+		t.Fatal(".ptpart left behind")
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatal("dest created")
+	}
+	if b, err := os.ReadFile(src); err != nil || string(b) != "payload" {
+		t.Fatalf("staging damaged: %q %v", b, err)
+	}
+}
+
+func TestCommitCrossVolumePtpartCleanupOnWriteFailure(t *testing.T) {
+	d := t.TempDir()
+	src := filepath.Join(d, "a.part")
+	writeFile(t, src, strings.Repeat("z", 4096))
+	dest := filepath.Join(d, "lib", "a.jpg")
+	ffs := &storagetest.FaultFS{FS: storage.OS(),
+		RenameErr: func(from, to string) error {
+			return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.EXDEV}
+		},
+		WriteErr: func(name string) error {
+			if strings.HasSuffix(name, ".ptpart") {
+				return syscall.ENOSPC
+			}
+			return nil
+		},
+	}
+	if err := storage.Commit(ffs, src, dest); err == nil {
+		t.Fatal("Commit succeeded")
+	}
+	if _, err := os.Stat(dest + ".ptpart"); !os.IsNotExist(err) {
+		t.Fatal(".ptpart left behind")
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatal("staging removed")
+	}
+}
+
+func TestCommitHooks(t *testing.T) {
+	for _, cross := range []bool{false, true} {
+		d := t.TempDir()
+		src := filepath.Join(d, "a.part")
+		writeFile(t, src, "x")
+		dest := filepath.Join(d, "lib", "a.jpg")
+		var fsys storage.FS = storage.OS()
+		if cross {
+			fsys = &storagetest.FaultFS{FS: storage.OS(), RenameErr: func(from, to string) error {
+				if from == src {
+					return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.EXDEV}
+				}
+				return nil
+			}}
+		}
+		var order []string
+		boom := errors.New("boom")
+		h := &storage.CommitHooks{
+			AfterCopy: func() error {
+				order = append(order, "copy")
+				if _, err := os.Stat(dest); cross && !os.IsNotExist(err) {
+					t.Error("dest exists at after_copy")
+				}
+				return nil
+			},
+			AfterRename: func() error {
+				order = append(order, "rename")
+				if _, err := os.Stat(dest); err != nil {
+					t.Error("dest missing at after_rename")
+				}
+				return boom
+			},
+		}
+		err := storage.CommitWithHooks(fsys, src, dest, h)
+		if !errors.Is(err, boom) {
+			t.Fatalf("cross=%v err = %v, want hook error", cross, err)
+		}
+		if strings.Join(order, ",") != "copy,rename" {
+			t.Fatalf("cross=%v order %v", cross, order)
+		}
+		if cross {
+			// A hook failure simulates a crash: staging is not removed.
+			if _, err := os.Stat(src); err != nil {
+				t.Fatal("staging removed after failing hook")
+			}
+		}
+	}
+}
+
+func TestCommitAfterCopyHookLeavesPtpart(t *testing.T) {
+	d := t.TempDir()
+	src := filepath.Join(d, "a.part")
+	writeFile(t, src, "x")
+	dest := filepath.Join(d, "lib", "a.jpg")
+	ffs := &storagetest.FaultFS{FS: storage.OS(), RenameErr: func(from, to string) error {
+		if from == src {
+			return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.EXDEV}
+		}
+		return nil
+	}}
+	boom := errors.New("crash")
+	err := storage.CommitWithHooks(ffs, src, dest, &storage.CommitHooks{AfterCopy: func() error { return boom }})
+	if !errors.Is(err, boom) {
+		t.Fatal(err)
+	}
+	// Like a crash, the copied .ptpart stays for recovery to sweep.
+	if _, err := os.Stat(dest + ".ptpart"); err != nil {
+		t.Fatal(".ptpart missing after simulated crash")
 	}
 }
