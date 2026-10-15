@@ -115,9 +115,10 @@ func (s *CheckService) Check(ctx context.Context, p Principal, items []CheckItem
 		}
 		now := s.d.Clock.Now()
 		for _, u := range sl {
-			// An expired receiving session awaiting the sweep is already gone
-			// for HEAD and create, so it is not offered for resumption.
-			if u.State == sessionReceiving && !now.Before(u.ExpiresAt) {
+			// An expired receiving session (strictly past expires_at, S§6.4)
+			// awaiting the sweep is already gone for HEAD and create, so it
+			// is not offered for resumption.
+			if u.State == sessionReceiving && now.After(u.ExpiresAt) {
 				continue
 			}
 			sessions[u.SHA256] = u

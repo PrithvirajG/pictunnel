@@ -195,3 +195,28 @@ func TestCheckNoCrossUserLeak(t *testing.T) {
 		t.Fatalf("alice linked bob's asset: %+v", s)
 	}
 }
+
+// TestCheckSessionAtExpiryInstant: a receiving session expires strictly
+// after expires_at (S§6.4), as HEAD, create and the expiry sweep see it, so
+// at exactly expires_at check still offers it for resumption. Found by the
+// S§11.5 property test: check said missing while create joined the session.
+func TestCheckSessionAtExpiryInstant(t *testing.T) {
+	e := newSenv(t)
+	sha := shaHex([]byte("at-expiry"))
+	sess := e.session(t, e.alice, sha, "receiving", 3, 7, e.clk.Now())
+	out, err := e.check.Check(context.Background(), e.alice, []CheckItem{{SHA256: sha, SizeBytes: 7}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Verdict != VerdictPartial || out[0].Upload == nil || out[0].Upload.ID != sess.ID {
+		t.Fatalf("at expires_at: %+v, want partial for %s", out[0], sess.ID)
+	}
+	e.clk.Advance(time.Millisecond)
+	out, err = e.check.Check(context.Background(), e.alice, []CheckItem{{SHA256: sha, SizeBytes: 7}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Verdict != VerdictMissing {
+		t.Fatalf("after expires_at: %+v, want missing", out[0])
+	}
+}
