@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -68,12 +69,38 @@ func (s *server) requestID(next http.Handler) http.Handler {
 			id = ids.New()
 		}
 		w.Header().Set(headerRequestID, id)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			// API responses are per-user; the media routes override this.
 			w.Header().Set("Cache-Control", "no-store")
 		}
 		ctx := withLogger(withRequestID(r.Context(), id), s.log)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// loopbackHosts are the Host names accepted on the loopback listener.
+var loopbackHosts = map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}
+
+// hostGuard rejects, on the loopback listener only, requests whose Host is
+// not a loopback name (403 forbidden). This blocks DNS rebinding: a page on
+// evil.example resolving to 127.0.0.1 must not reach the unauthenticated
+// setup or the non-Secure cookie.
+func (s *server) hostGuard(next http.Handler) http.Handler {
+	if !s.local {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+		if !loopbackHosts[strings.ToLower(host)] {
+			WriteProblem(w, r, apperr.Forbidden("Host is not a loopback name."))
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -107,9 +134,12 @@ func (s *server) recoverer(next http.Handler) http.Handler {
 			}
 			s.log.Error("panic", "request_id", RequestIDFrom(r.Context()), "method", r.Method,
 				"path", r.URL.Path, "panic", fmt.Sprint(p.value), "stack", p.stack)
-			if sw.status == 0 {
-				WriteProblem(w, r, apperr.Internal())
+			if sw.status != 0 {
+				// Headers are out: abort the connection so the client sees a
+				// failed response, not a truncated complete one.
+				panic(http.ErrAbortHandler)
 			}
+			WriteProblem(w, r, apperr.Internal())
 		}()
 		next.ServeHTTP(sw, r)
 	})

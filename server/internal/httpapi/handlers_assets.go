@@ -153,6 +153,9 @@ type rangeProblemWriter struct {
 func (w *rangeProblemWriter) WriteHeader(code int) {
 	if code == http.StatusRequestedRangeNotSatisfiable {
 		w.replaced = true
+		h := w.Header()
+		h.Del("Content-Disposition")
+		h.Set("Cache-Control", "no-store")
 		WriteProblem(w.ResponseWriter, w.r, apperr.RangeNotSatisfiable())
 		return
 	}

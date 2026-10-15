@@ -98,11 +98,11 @@ func NewHandler(d Deps, local bool) http.Handler {
 		api.ServeHTTP(w, r)
 	}))
 
-	// Outermost first: request id → recover → access log → version gate →
-	// auth → CSRF → rate limit.
+	// Outermost first: request id → loopback host guard → recover → access
+	// log → version gate → auth → CSRF → rate limit.
 	var h http.Handler = mux
 	for _, mw := range []func(http.Handler) http.Handler{
-		s.rateLimit, s.csrf, s.auth, s.versionGate, s.accessLog, s.recoverer, s.requestID,
+		s.rateLimit, s.csrf, s.auth, s.versionGate, s.accessLog, s.recoverer, s.hostGuard, s.requestID,
 	} {
 		h = mw(h)
 	}
