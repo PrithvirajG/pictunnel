@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -547,26 +548,39 @@ func TestRecoverNeither(t *testing.T) {
 func TestRecoverSweepsStrays(t *testing.T) {
 	e := newFenv(t)
 	live := e.stage(t, []byte("still receiving"), map[string]any{"filename": "a.jpg", "mime": "image/jpeg"})
-	orphanStaging := filepath.Join(e.dataDir, "uploads", "orphan.part")
+	// A done session whose cross-volume copy left <dest>.ptpart behind (crash
+	// after tx2 before the copy's cleanup is impossible, but a failed remove
+	// is not).
+	done := e.stage(t, []byte("done"), map[string]any{"filename": "d.jpg", "mime": "image/jpeg"})
+	e.finalize(t, done)
+	donePart := e.libPath(e.session(t, done.ID).DestPath) + ".ptpart"
+	writeAt(t, donePart, []byte("x"))
+	orphanStaging := filepath.Join(e.dataDir, "uploads", "01900000-0000-7000-8000-00000000abcd.part")
 	writeAt(t, orphanStaging, []byte("x"))
-	strayPart := e.libPath("alice/2020/01/x.jpg.ptpart")
-	writeAt(t, strayPart, []byte("x"))
+	foreign := filepath.Join(e.dataDir, "uploads", "notes.txt")
+	writeAt(t, foreign, []byte("not ours"))
+	// No session references this one; recovery no longer walks the library,
+	// so it stays (the purge_trash orphan sweep owns unreferenced files).
+	unreferenced := e.libPath("alice/2020/01/x.jpg.ptpart")
+	writeAt(t, unreferenced, []byte("x"))
 	keep := e.libPath("alice/2020/01/keep.jpg")
 	writeAt(t, keep, []byte("user file"))
 	e.recoverTwice(t)
-	if exists(orphanStaging) || exists(strayPart) {
+	if exists(orphanStaging) || exists(donePart) {
 		t.Fatal("strays not swept")
 	}
-	if !exists(live.StagingPath) || !exists(keep) {
-		t.Fatal("live staging or library file removed")
+	if !exists(live.StagingPath) || !exists(keep) || !exists(foreign) || !exists(unreferenced) {
+		t.Fatal("live staging, a foreign file or a library file was removed")
 	}
 	var names []string
 	for _, p := range e.strays(t) {
 		names = append(names, filepath.Base(p))
 	}
 	sort.Strings(names)
-	if len(names) != 1 || names[0] != filepath.Base(live.StagingPath) {
-		t.Fatalf("remaining %v", names)
+	want := []string{filepath.Base(live.StagingPath), "notes.txt", "x.jpg.ptpart"}
+	sort.Strings(want)
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("remaining %v, want %v", names, want)
 	}
 }
 

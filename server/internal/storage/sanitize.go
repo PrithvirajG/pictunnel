@@ -41,6 +41,11 @@ func SanitizeFilename(name string) string {
 	if s == "" {
 		return "file"
 	}
+	// ".ptpart" marks in-flight copies that recovery deletes, so no stored
+	// name may end with it (in any case).
+	if n := len(s) - len(ptpartSuffix); n >= 0 && strings.EqualFold(s[n:], ptpartSuffix) {
+		s = s[:n] + "_" + s[n+1:]
+	}
 	// Windows reserves the device name even when followed by an extension.
 	stem := s
 	if i := strings.IndexByte(stem, '.'); i >= 0 {

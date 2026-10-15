@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -232,10 +233,13 @@ func (s *FinalizeService) Finalize(ctx context.Context, sess repository.UploadSe
 
 	// Step 1: digest.
 	if !strings.EqualFold(digest, sess.SHA256) {
-		if err := s.fail(ctx, sess.ID, "checksum_mismatch", false); err != nil {
+		applied, err := s.failIf(ctx, sess.ID, sessionReceiving, "checksum_mismatch", false)
+		if err != nil {
 			return FinalizeResult{}, err
 		}
-		s.removeQuiet(staging)
+		if applied { // never delete the staging file of a session past receiving
+			s.removeQuiet(staging)
+		}
 		return FinalizeResult{}, apperr.ChecksumMismatch()
 	}
 	if err := hitFailpoint(s.fp, FPBeforeTx1); err != nil {
@@ -403,18 +407,31 @@ func (s *FinalizeService) sizeMatches(p string, size int64) bool {
 	return err == nil && fi.Mode().IsRegular() && fi.Size() == size
 }
 
-// fileMatches reports whether p is a regular file of the given size and hash.
-func (s *FinalizeService) fileMatches(p string, size int64, sha string) bool {
-	if !s.sizeMatches(p, size) {
-		return false
+// checkFile reports whether p is a regular file of the given size and hash.
+// (false, nil) means a successful look proved it absent or different; any
+// other failure (permissions, I/O, a vanished mount) is returned as an error
+// so callers never delete or give up on a copy they could not read.
+func (s *FinalizeService) checkFile(p string, size int64, sha string) (bool, error) {
+	fi, err := s.d.FS.Stat(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() != size {
+		return false, nil
 	}
 	f, err := s.d.FS.Open(p)
 	if err != nil {
-		return false
+		return false, err // it existed a moment ago: not proof of absence
 	}
 	defer f.Close()
 	got, err := contenthash.HashReader(f)
-	return err == nil && strings.EqualFold(got, sha)
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(got, sha), nil
 }
 
 // probeDate runs the fast date probe over the head of p and applies the date
@@ -466,43 +483,53 @@ func (s *FinalizeService) enqueue(ctx context.Context, tx *sql.Tx, kind, assetID
 	return s.d.Jobs.Enqueue(ctx, tx, kind, assetID, payload, time.Time{})
 }
 
+// tx2Outcome is what tx2 decided. discardDest asks for the moved file to be
+// deleted once the transaction has committed, never inside it. The path is
+// unreserved by then, but the on-disk check in Assign keeps the name from
+// being reused until the file is gone.
+type tx2Outcome struct {
+	res         FinalizeResult
+	failure     error
+	discardDest bool
+}
+
 // commitAsset is tx2 (S§6.2 step 4). It is idempotent: a session that is no
 // longer finalizing reports its recorded outcome.
 func (s *FinalizeService) commitAsset(ctx context.Context, sess repository.UploadSession, meta sessionMeta, date dateInfo) (FinalizeResult, error) {
-	var (
-		res     FinalizeResult
-		failure error
-	)
+	var out tx2Outcome
 	err := s.d.Store.WithTx(ctx, func(tx *sql.Tx) error {
-		res, failure = FinalizeResult{}, nil
+		out = tx2Outcome{}
 		cur, err := s.d.UploadSessions.Get(ctx, tx, sess.ID)
 		if err != nil {
 			return err
 		}
 		switch cur.State {
 		case sessionDone:
-			res = FinalizeResult{AssetID: deref(cur.AssetID), Created: cur.AssetCreated}
+			out.res = FinalizeResult{AssetID: deref(cur.AssetID), Created: cur.AssetCreated}
 			return nil
 		case sessionFinalizing:
 		default:
-			failure = apperr.NotFound()
+			out.failure = apperr.NotFound()
 			return nil
 		}
 		now := s.d.Clock.Now()
 		if meta.live() {
-			res, failure, err = s.commitLive(ctx, tx, sess, meta, now)
-			return err
+			out, err = s.commitLive(ctx, tx, sess, meta, now)
+		} else {
+			out, err = s.commitPrimary(ctx, tx, sess, meta, date, now)
 		}
-		res, err = s.commitPrimary(ctx, tx, sess, meta, date, now)
 		return err
 	})
 	if err != nil {
 		return FinalizeResult{}, err
 	}
-	return res, failure
+	if out.discardDest {
+		s.removeQuiet(s.libAbs(sess.DestPath))
+	}
+	return out.res, out.failure
 }
 
-func (s *FinalizeService) commitPrimary(ctx context.Context, tx *sql.Tx, sess repository.UploadSession, meta sessionMeta, date dateInfo, now time.Time) (FinalizeResult, error) {
+func (s *FinalizeService) commitPrimary(ctx context.Context, tx *sql.Tx, sess repository.UploadSession, meta sessionMeta, date dateInfo, now time.Time) (tx2Outcome, error) {
 	a := repository.Asset{
 		ID: ids.New(), OwnerID: sess.OwnerID, SHA256: sess.SHA256, SizeBytes: sess.Length, Mime: meta.Mime,
 		Kind: assetKind(meta.Mime), Filename: meta.Filename, OriginalPath: sess.DestPath,
@@ -514,7 +541,7 @@ func (s *FinalizeService) commitPrimary(ctx context.Context, tx *sql.Tx, sess re
 		a.StackKey = &k
 		id, ok, err := s.d.Assets.StackIDForKey(ctx, tx, sess.OwnerID, k)
 		if err != nil {
-			return FinalizeResult{}, err
+			return tx2Outcome{}, err
 		}
 		if ok {
 			a.StackID = &id
@@ -524,110 +551,129 @@ func (s *FinalizeService) commitPrimary(ctx context.Context, tx *sql.Tx, sess re
 	if errors.Is(err, repository.ErrUniqueViolation) {
 		existing, gerr := s.d.Assets.GetBySHA(ctx, tx, sess.OwnerID, sess.SHA256)
 		if gerr != nil {
-			return FinalizeResult{}, gerr
+			return tx2Outcome{}, gerr
 		}
 		if err := s.resolveToExisting(ctx, tx, sess, existing.ID, now); err != nil {
-			return FinalizeResult{}, err
+			return tx2Outcome{}, err
 		}
-		return FinalizeResult{AssetID: existing.ID}, s.linkSource(ctx, tx, sess, meta, existing.ID, now)
+		if err := s.linkSource(ctx, tx, sess, meta, existing.ID, now); err != nil {
+			return tx2Outcome{}, err
+		}
+		return tx2Outcome{res: FinalizeResult{AssetID: existing.ID}, discardDest: true}, nil
 	}
 	if err != nil {
-		return FinalizeResult{}, err
+		return tx2Outcome{}, err
 	}
 	if err := s.linkSource(ctx, tx, sess, meta, a.ID, now); err != nil {
-		return FinalizeResult{}, err
+		return tx2Outcome{}, err
 	}
 	if err := s.appendUpsert(ctx, tx, sess.OwnerID, a.ID, now); err != nil {
-		return FinalizeResult{}, err
+		return tx2Outcome{}, err
 	}
 	for _, kind := range []string{JobExtractMetadata, JobGenerateThumbnails} {
 		if err := s.enqueue(ctx, tx, kind, a.ID); err != nil {
-			return FinalizeResult{}, err
+			return tx2Outcome{}, err
 		}
 	}
 	if meta.OverrideTombstone {
 		if _, err := s.d.Tombstones.Delete(ctx, tx, sess.OwnerID, sess.SHA256); err != nil {
-			return FinalizeResult{}, err
+			return tx2Outcome{}, err
 		}
 	}
 	if err := s.d.LibraryPaths.PointToAsset(ctx, tx, storage.PathKey(sess.DestPath), a.ID); err != nil {
-		return FinalizeResult{}, err
+		return tx2Outcome{}, err
 	}
 	if err := s.d.UploadSessions.SetDone(ctx, tx, sess.ID, a.ID, true, now); err != nil {
-		return FinalizeResult{}, err
+		return tx2Outcome{}, err
 	}
-	return FinalizeResult{AssetID: a.ID, Created: true}, nil
+	return tx2Outcome{res: FinalizeResult{AssetID: a.ID, Created: true}}, nil
 }
 
 // commitLive attaches a live video to its primary (P§5 H4).
-func (s *FinalizeService) commitLive(ctx context.Context, tx *sql.Tx, sess repository.UploadSession, meta sessionMeta, now time.Time) (FinalizeResult, error, error) {
+func (s *FinalizeService) commitLive(ctx context.Context, tx *sql.Tx, sess repository.UploadSession, meta sessionMeta, now time.Time) (tx2Outcome, error) {
 	primary, err := s.d.Assets.GetBySHA(ctx, tx, sess.OwnerID, meta.PairSHA256)
 	if errors.Is(err, repository.ErrNotFound) {
 		// The primary was purged after tx1.
-		s.removeQuiet(s.libAbs(sess.DestPath))
 		if err := s.d.LibraryPaths.ReleaseByUpload(ctx, tx, sess.ID); err != nil {
-			return FinalizeResult{}, nil, err
+			return tx2Outcome{}, err
 		}
-		return FinalizeResult{}, apperr.PairPrimaryMissing(),
-			s.d.UploadSessions.SetFailed(ctx, tx, sess.ID, "pair_primary_missing", now)
+		if err := s.d.UploadSessions.SetFailed(ctx, tx, sess.ID, "pair_primary_missing", now); err != nil {
+			return tx2Outcome{}, err
+		}
+		return tx2Outcome{failure: apperr.PairPrimaryMissing(), discardDest: true}, nil
 	}
 	if err != nil {
-		return FinalizeResult{}, nil, err
+		return tx2Outcome{}, err
 	}
 	err = s.d.LiveVideos.Insert(ctx, tx, repository.LiveVideo{
 		AssetID: primary.ID, OwnerID: sess.OwnerID, SHA256: sess.SHA256, SizeBytes: sess.Length,
 		Mime: meta.Mime, Filename: meta.Filename, OriginalPath: sess.DestPath, CreatedAt: now,
 	})
 	if errors.Is(err, repository.ErrUniqueViolation) {
-		return FinalizeResult{AssetID: primary.ID}, nil, s.resolveToExisting(ctx, tx, sess, primary.ID, now)
+		if err := s.resolveToExisting(ctx, tx, sess, primary.ID, now); err != nil {
+			return tx2Outcome{}, err
+		}
+		return tx2Outcome{res: FinalizeResult{AssetID: primary.ID}, discardDest: true}, nil
 	}
 	if err != nil {
-		return FinalizeResult{}, nil, err
+		return tx2Outcome{}, err
 	}
 	if err := s.d.Assets.SetKind(ctx, tx, primary.ID, "live_photo"); err != nil {
-		return FinalizeResult{}, nil, err
+		return tx2Outcome{}, err
 	}
 	if err := s.appendUpsert(ctx, tx, sess.OwnerID, primary.ID, now); err != nil {
-		return FinalizeResult{}, nil, err
+		return tx2Outcome{}, err
 	}
 	// The live component's duration is extracted with the primary's metadata.
 	if err := s.enqueue(ctx, tx, JobExtractMetadata, primary.ID); err != nil {
-		return FinalizeResult{}, nil, err
+		return tx2Outcome{}, err
 	}
 	if err := s.d.LibraryPaths.PointToAsset(ctx, tx, storage.PathKey(sess.DestPath), primary.ID); err != nil {
-		return FinalizeResult{}, nil, err
+		return tx2Outcome{}, err
 	}
 	if err := s.d.UploadSessions.SetDone(ctx, tx, sess.ID, primary.ID, true, now); err != nil {
-		return FinalizeResult{}, nil, err
+		return tx2Outcome{}, err
 	}
-	return FinalizeResult{AssetID: primary.ID, Created: true}, nil, nil
+	return tx2Outcome{res: FinalizeResult{AssetID: primary.ID, Created: true}}, nil
 }
 
-// resolveToExisting handles a tx2 unique conflict: delete the moved file,
-// release the reservation and point the session at the existing asset.
+// resolveToExisting handles a tx2 unique conflict: release the reservation
+// and point the session at the existing asset. The caller deletes the moved
+// file after commit.
 func (s *FinalizeService) resolveToExisting(ctx context.Context, tx *sql.Tx, sess repository.UploadSession, assetID string, now time.Time) error {
-	s.removeQuiet(s.libAbs(sess.DestPath))
 	if err := s.d.LibraryPaths.ReleaseByUpload(ctx, tx, sess.ID); err != nil {
 		return err
 	}
 	return s.d.UploadSessions.SetDone(ctx, tx, sess.ID, assetID, false, now)
 }
 
-// fail marks the session failed with code, releasing its reservation.
-func (s *FinalizeService) fail(ctx context.Context, id, code string, release bool) error {
-	return s.d.Store.WithTx(ctx, func(tx *sql.Tx) error {
+// failIf marks the session failed with code, releasing its reservation, but
+// only while it is still in state from. It reports whether it did.
+func (s *FinalizeService) failIf(ctx context.Context, id, from, code string, release bool) (bool, error) {
+	applied := false
+	err := s.d.Store.WithTx(ctx, func(tx *sql.Tx) error {
+		applied = false
+		cur, err := s.d.UploadSessions.Get(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if cur.State != from {
+			return nil
+		}
 		if release {
 			if err := s.d.LibraryPaths.ReleaseByUpload(ctx, tx, id); err != nil {
 				return err
 			}
 		}
+		applied = true
 		return s.d.UploadSessions.SetFailed(ctx, tx, id, code, s.d.Clock.Now())
 	})
+	return applied, err
 }
 
 // Recover runs at boot before the listeners open: it resolves every
-// finalizing session by the S§6.2 table, then deletes stray *.ptpart files
-// under the library and staging files with no live session. Idempotent.
+// finalizing session by the S§6.2 table, then deletes leftover <dest>.ptpart
+// files of finished sessions and orphan staging files. Idempotent.
 func (s *FinalizeService) Recover(ctx context.Context) error {
 	sessions, err := s.d.UploadSessions.ListByState(ctx, s.d.Store.R, sessionFinalizing)
 	if err != nil {
@@ -679,14 +725,52 @@ func isInternal(err error) bool {
 	return ok && ae.Code == "internal"
 }
 
-// recoverSession applies the S§6.2 recovery table to one finalizing
-// session. The caller holds the in-flight mark.
-func (s *FinalizeService) recoverSession(ctx context.Context, sess repository.UploadSession) (FinalizeResult, error) {
+// requireDir fails unless p is an existing, readable directory. Recovery uses
+// it so an unmounted library or data volume is never mistaken for a missing
+// file, which would fail the upload or recreate the mount point.
+func (s *FinalizeService) requireDir(p string) error {
+	fi, err := s.d.FS.Stat(p)
+	if err != nil {
+		return internalErr("recover: root unavailable", err)
+	}
+	if !fi.IsDir() {
+		return internalErr("recover: root unavailable", fmt.Errorf("%s is not a directory", p))
+	}
+	if _, err := s.d.FS.ReadDir(p); err != nil {
+		return internalErr("recover: root unreadable", err)
+	}
+	return nil
+}
+
+// recoverSession applies the S§6.2 recovery table to one session. It
+// re-reads the row first and acts only while it is still finalizing. The
+// caller holds the in-flight mark.
+func (s *FinalizeService) recoverSession(ctx context.Context, stale repository.UploadSession) (FinalizeResult, error) {
+	sess, err := s.d.UploadSessions.Get(ctx, s.d.Store.R, stale.ID)
+	if err != nil {
+		return FinalizeResult{}, err
+	}
+	switch sess.State {
+	case sessionFinalizing:
+	case sessionDone:
+		return FinalizeResult{AssetID: deref(sess.AssetID), Created: sess.AssetCreated}, nil
+	default:
+		return FinalizeResult{}, apperr.NotFound()
+	}
+	if sess.DestPath == "" {
+		return FinalizeResult{}, internalErr("recover", fmt.Errorf("finalizing session %s has no dest_path", sess.ID))
+	}
+	if err := s.requireDir(s.d.LibraryDir); err != nil {
+		return FinalizeResult{}, err
+	}
+	staging, dest := s.stagingAbs(sess), s.libAbs(sess.DestPath)
+	if err := s.requireDir(filepath.Dir(staging)); err != nil {
+		return FinalizeResult{}, err
+	}
 	meta, err := parseSessionMeta(sess)
 	if err != nil {
 		return FinalizeResult{}, err
 	}
-	staging, dest := s.stagingAbs(sess), s.libAbs(sess.DestPath)
 	part := dest + storage.PtpartSuffix
 	date := func(p string) dateInfo {
 		if meta.live() {
@@ -694,33 +778,49 @@ func (s *FinalizeService) recoverSession(ctx context.Context, sess repository.Up
 		}
 		return s.probeDate(p, meta)
 	}
-	switch {
-	case sess.DestPath != "" && s.fileMatches(dest, sess.Length, sess.SHA256):
+
+	// Row 1: dest valid, so run tx2.
+	destOK, err := s.checkFile(dest, sess.Length, sess.SHA256)
+	if err != nil {
+		return FinalizeResult{}, internalErr("recover: read dest", err)
+	}
+	if destOK {
 		res, err := s.commitAsset(ctx, sess, meta, date(dest))
 		if err == nil {
 			s.removeQuiet(staging)
 			s.removeQuiet(part)
 		}
 		return res, err
-	case sess.DestPath != "" && s.fileMatches(staging, sess.Length, sess.SHA256):
+	}
+	// Row 2: dest proven absent or wrong and staging valid, so redo the move.
+	stagingOK, err := s.checkFile(staging, sess.Length, sess.SHA256)
+	if err != nil {
+		return FinalizeResult{}, internalErr("recover: read staging", err)
+	}
+	if stagingOK {
 		s.removeQuiet(dest)
 		s.removeQuiet(part)
 		return s.moveAndCommit(ctx, sess, meta, date(staging), nil)
 	}
+	// Row 3: both were read and neither is valid.
 	s.log.Error("finalize recovery: no valid copy; failing upload", "upload_id", sess.ID)
-	if sess.DestPath != "" {
-		s.removeQuiet(dest)
-		s.removeQuiet(part)
-	}
-	s.removeQuiet(staging)
-	if err := s.fail(ctx, sess.ID, "internal", true); err != nil {
+	if _, err := s.failIf(ctx, sess.ID, sessionFinalizing, "internal", true); err != nil {
 		return FinalizeResult{}, err
 	}
+	s.removeQuiet(dest)
+	s.removeQuiet(part)
+	s.removeQuiet(staging)
 	return FinalizeResult{}, apperr.NotFound()
 }
 
-// sweep deletes staging files without a receiving or finalizing session and
-// *.ptpart files under the library that no finalizing session owns.
+// stagingName matches staging files this server creates: <uuid>.part.
+var stagingName = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.part$`)
+
+// sweep deletes (a) <dest>.ptpart files left by finished (done or failed)
+// sessions, derived from their rows rather than by walking the library, and
+// (b) files in the staging dir named like staging files that belong to no
+// receiving or finalizing session. Nothing else is touched; unreferenced
+// library files belong to the purge_trash orphan sweep.
 func (s *FinalizeService) sweep(ctx context.Context) error {
 	keepStaging := map[string]bool{}
 	keepPart := map[string]bool{}
@@ -736,6 +836,25 @@ func (s *FinalizeService) sweep(ctx context.Context) error {
 			}
 		}
 	}
+	for _, state := range []string{sessionDone, sessionFailed} {
+		sessions, err := s.d.UploadSessions.ListByState(ctx, s.d.Store.R, state)
+		if err != nil {
+			return err
+		}
+		for _, sess := range sessions {
+			if sess.DestPath == "" {
+				continue
+			}
+			part := filepath.Clean(s.libAbs(sess.DestPath) + storage.PtpartSuffix)
+			if keepPart[part] {
+				continue // the path was released and now belongs to another upload
+			}
+			if _, err := s.d.FS.Stat(part); err == nil {
+				s.log.Info("finalize recovery: removing leftover partial copy", "path", part)
+				s.removeQuiet(part)
+			}
+		}
+	}
 	stagingDir := filepath.Join(s.d.DataDir, stagingDirName)
 	ents, err := s.d.FS.ReadDir(stagingDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -743,34 +862,10 @@ func (s *FinalizeService) sweep(ctx context.Context) error {
 	}
 	for _, e := range ents {
 		p := filepath.Join(stagingDir, e.Name())
-		if e.Type().IsRegular() && !keepStaging[filepath.Clean(p)] {
+		if e.Type().IsRegular() && stagingName.MatchString(e.Name()) && !keepStaging[filepath.Clean(p)] {
 			s.log.Info("finalize recovery: removing orphan staging file", "path", p)
 			s.removeQuiet(p)
 		}
 	}
-	return s.sweepParts(s.d.LibraryDir, keepPart)
-}
-
-func (s *FinalizeService) sweepParts(dir string, keep map[string]bool) error {
-	ents, err := s.d.FS.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("sweep library: %w", err)
-	}
-	var errs []error
-	for _, e := range ents {
-		p := filepath.Join(dir, e.Name())
-		switch {
-		case e.IsDir():
-			if err := s.sweepParts(p, keep); err != nil {
-				errs = append(errs, err)
-			}
-		case e.Type().IsRegular() && strings.HasSuffix(e.Name(), storage.PtpartSuffix) && !keep[filepath.Clean(p)]:
-			s.log.Info("finalize recovery: removing stray partial copy", "path", p)
-			s.removeQuiet(p)
-		}
-	}
-	return errors.Join(errs...)
+	return nil
 }

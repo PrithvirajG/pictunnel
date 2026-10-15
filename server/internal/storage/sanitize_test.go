@@ -81,8 +81,27 @@ func FuzzSanitizeFilename(f *testing.F) {
 		if !norm.NFC.IsNormalString(out) {
 			t.Fatalf("not NFC %q", out)
 		}
+		if strings.HasSuffix(strings.ToLower(out), ".ptpart") {
+			t.Fatalf("reserved .ptpart suffix in %q", out)
+		}
 		if storage.SanitizeFilename(out) != out {
 			t.Fatalf("not idempotent %q -> %q", out, storage.SanitizeFilename(out))
 		}
 	})
+}
+
+func TestSanitizeFilenameReservesPtpart(t *testing.T) {
+	for in, want := range map[string]string{
+		"x.ptpart":        "x_ptpart",
+		"X.PTPART":        "X_PTPART",
+		"a.jpg.PtPart":    "a.jpg_PtPart",
+		".ptpart":         "_ptpart",
+		"x.ptpart. ":      "x_ptpart",
+		"x.ptpart.ptpart": "x.ptpart_ptpart",
+		"x.ptparts":       "x.ptparts",
+	} {
+		if got := storage.SanitizeFilename(in); got != want {
+			t.Errorf("SanitizeFilename(%q) = %q, want %q", in, got, want)
+		}
+	}
 }

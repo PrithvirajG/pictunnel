@@ -86,7 +86,12 @@ func (s *LibraryService) Assign(ctx context.Context, tx queries.DBTX, in AssignI
 		if err != nil {
 			return "", err
 		}
-		if taken || s.onDisk(rel) {
+		if taken {
+			continue
+		}
+		if taken, err = s.onDisk(rel); err != nil {
+			return "", err
+		} else if taken {
 			continue
 		}
 		err = s.d.LibraryPaths.Reserve(ctx, tx, repository.LibraryPath{
@@ -111,12 +116,20 @@ func splitExt(name string) (string, string) {
 	return stem, ext
 }
 
-func (s *LibraryService) onDisk(rel string) bool {
+func (s *LibraryService) onDisk(rel string) (bool, error) {
 	if s.d.FS == nil || s.d.LibraryDir == "" {
-		return false
+		return false, nil
 	}
-	_, err := s.d.FS.Stat(filepath.Join(s.d.LibraryDir, filepath.FromSlash(rel)))
-	// Anything but "does not exist" counts as taken, so an unreadable entry
-	// is never overwritten.
-	return !errors.Is(err, fs.ErrNotExist)
+	// The cross-volume copy writes <dest>.ptpart, so that name must be free too.
+	abs := filepath.Join(s.d.LibraryDir, filepath.FromSlash(rel))
+	for _, p := range []string{abs, abs + storage.PtpartSuffix} {
+		_, err := s.d.FS.Stat(p)
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return false, fmt.Errorf("library: stat %s: %w", p, err)
+		}
+	}
+	return false, nil
 }
