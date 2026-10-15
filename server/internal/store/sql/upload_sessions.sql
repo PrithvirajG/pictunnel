@@ -38,7 +38,7 @@ SELECT * FROM upload_sessions WHERE state = 'receiving' AND expires_at < ? ORDER
 SELECT * FROM upload_sessions WHERE state = 'finalizing' AND updated_at < ? ORDER BY updated_at, id;
 
 -- name: DeleteUploadSessionsOlderThan :execrows
-DELETE FROM upload_sessions WHERE state IN (sqlc.slice(states)) AND updated_at < sqlc.arg(before);
+DELETE FROM upload_sessions WHERE updated_at < sqlc.arg(before) AND state IN (sqlc.slice(states));
 
 -- name: DeleteUploadSession :execrows
 DELETE FROM upload_sessions WHERE id = ?;

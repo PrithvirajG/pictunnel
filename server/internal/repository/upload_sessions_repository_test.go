@@ -118,6 +118,11 @@ func TestUploadSessionsLifecycle(t *testing.T) {
 		t.Fatalf("ListStuckFinalizing: %+v %v", stuck, err)
 	}
 
+	// A cutoff at or before their updated_at keeps them (the cutoff must not
+	// bind to a slice element).
+	if n, err := r.DeleteOlderThan(ctx, s.W, []string{"done", "failed"}, later); err != nil || n != 0 {
+		t.Fatalf("DeleteOlderThan before cutoff n=%d err=%v", n, err)
+	}
 	n, err := r.DeleteOlderThan(ctx, s.W, []string{"done", "failed"}, later.Add(time.Second))
 	if err != nil || n != 2 {
 		t.Fatalf("DeleteOlderThan n=%d err=%v", n, err)

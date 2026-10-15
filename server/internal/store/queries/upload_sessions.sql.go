@@ -23,17 +23,18 @@ func (q *Queries) DeleteUploadSession(ctx context.Context, id string) (int64, er
 }
 
 const deleteUploadSessionsOlderThan = `-- name: DeleteUploadSessionsOlderThan :execrows
-DELETE FROM upload_sessions WHERE state IN (/*SLICE:states*/?) AND updated_at < ?2
+DELETE FROM upload_sessions WHERE updated_at < ?1 AND state IN (/*SLICE:states*/?)
 `
 
 type DeleteUploadSessionsOlderThanParams struct {
-	States []string
 	Before string
+	States []string
 }
 
 func (q *Queries) DeleteUploadSessionsOlderThan(ctx context.Context, arg DeleteUploadSessionsOlderThanParams) (int64, error) {
 	query := deleteUploadSessionsOlderThan
 	var queryParams []interface{}
+	queryParams = append(queryParams, arg.Before)
 	if len(arg.States) > 0 {
 		for _, v := range arg.States {
 			queryParams = append(queryParams, v)
@@ -42,7 +43,6 @@ func (q *Queries) DeleteUploadSessionsOlderThan(ctx context.Context, arg DeleteU
 	} else {
 		query = strings.Replace(query, "/*SLICE:states*/?", "NULL", 1)
 	}
-	queryParams = append(queryParams, arg.Before)
 	result, err := q.db.ExecContext(ctx, query, queryParams...)
 	if err != nil {
 		return 0, err
