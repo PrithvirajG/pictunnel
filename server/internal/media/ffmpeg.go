@@ -136,8 +136,12 @@ func FFprobe(ctx context.Context, t Tools, path string) (Probe, error) {
 	if t.FFprobe == "" {
 		return Probe{}, ErrToolMissing
 	}
+	in, err := inputArgs(path)
+	if err != nil {
+		return Probe{}, err
+	}
 	out, err := run(ctx, ProbeTimeout, t.FFprobe,
-		"-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-i", path)
+		append([]string{"-v", "error", "-print_format", "json", "-show_format", "-show_streams"}, in...)...)
 	if err != nil {
 		return Probe{}, err
 	}
@@ -229,18 +233,64 @@ func Transcode(ctx context.Context, t Tools, src, dst string) error {
 		return err
 	}
 	defer os.Remove(tmp)
-	_, err = run(ctx, TranscodeTimeout, t.FFmpeg,
-		"-nostdin", "-v", "error", "-y", "-i", src,
+	in, err := inputArgs(src)
+	if err != nil {
+		return err
+	}
+	out, err := fileURL(tmp)
+	if err != nil {
+		return err
+	}
+	args := append([]string{"-nostdin", "-v", "error", "-y"}, in...)
+	args = append(args,
 		"-map", "0:v:0", "-map", "0:a:0?",
 		"-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
 		// libx264 with yuv420p needs even dimensions.
 		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
 		"-c:a", "aac", "-b:a", "128k",
-		"-movflags", "+faststart", "-pix_fmt", "yuv420p", "-f", "mp4", tmp)
-	if err != nil {
+		"-movflags", "+faststart", "-pix_fmt", "yuv420p", "-f", "mp4", out)
+	if _, err := run(ctx, TranscodeTimeout, t.FFmpeg, args...); err != nil {
 		return err
 	}
 	return os.Rename(tmp, dst)
+}
+
+// image2Exts are extensions ffmpeg's image2 demuxer claims by name. For
+// those it reads "%d" and glob characters in a file name as a sequence
+// pattern.
+var image2Exts = map[string]bool{
+	"jpg": true, "jpeg": true, "jps": true, "mpo": true, "png": true, "bmp": true, "tga": true,
+	"tif": true, "tiff": true, "dng": true, "webp": true, "gif": true, "jxl": true, "jp2": true,
+	"j2k": true, "jpc": true, "j2c": true, "dpx": true, "exr": true, "pgm": true, "ppm": true,
+	"pbm": true, "pnm": true, "pam": true, "pfm": true, "hdr": true, "qoi": true, "sgi": true,
+	"pcx": true, "xbm": true, "xpm": true, "xwd": true, "sun": true, "ras": true, "pix": true,
+}
+
+// fileURL returns path as an absolute "file:" URL, so a name starting with
+// "-" is never parsed as an option and one containing ":" never selects
+// another protocol.
+func fileURL(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return "file:" + abs, nil
+}
+
+// inputArgs returns the arguments that open path as an ffmpeg/ffprobe
+// input. When the image2 demuxer would treat the name as a sequence pattern
+// it is selected explicitly with pattern matching disabled. Other inputs
+// keep content probing, so a mislabelled file still opens.
+func inputArgs(path string) ([]string, error) {
+	u, err := fileURL(path)
+	if err != nil {
+		return nil, err
+	}
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+	if image2Exts[ext] && strings.ContainsAny(filepath.Base(path), "%*?[{") {
+		return []string{"-f", "image2", "-pattern_type", "none", "-i", u}, nil
+	}
+	return []string{"-i", u}, nil
 }
 
 // tempName reserves a unique file name in dir matching pattern and returns

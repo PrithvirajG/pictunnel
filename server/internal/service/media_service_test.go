@@ -8,6 +8,7 @@ import (
 	_ "image/jpeg"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -151,6 +152,47 @@ func TestExtractMetadataVideo(t *testing.T) {
 	jobsQ := e.pendingJobs(t, JobTranscodeVideo)
 	if len(jobsQ) != 1 || jobsQ[0].DedupeKey != hevc.ID {
 		t.Fatalf("transcode jobs %+v", jobsQ)
+	}
+}
+
+func TestExtractMetadataAudioOnly(t *testing.T) {
+	tl := mediaToolsOrSkip(t)
+	e := newSenv(t)
+	ctx := context.Background()
+	m4a := filepath.Join(t.TempDir(), "audio.m4a")
+	cmd := exec.Command(tl.FFmpeg, "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5",
+		"-c:a", "aac", "-b:a", "32k", m4a)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v\n%s", err, b)
+	}
+	b, err := os.ReadFile(m4a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := e.seed(t, e.alice, string(b), withMime("video/mp4", "video"))
+	if err := e.media(tl, nil).ExtractMetadata(ctx, assetPayload(a.ID)); err != nil {
+		t.Fatal(err)
+	}
+	got := e.asset(t, a.ID)
+	if got.Playable == nil || *got.Playable || got.VideoCodec != nil {
+		t.Fatalf("audio-only: playable %v video %v", got.Playable, got.VideoCodec)
+	}
+	if n := len(e.pendingJobs(t, JobTranscodeVideo)); n != 0 {
+		t.Fatalf("transcode enqueued for a file with no video stream: %d", n)
+	}
+}
+
+func TestExtractMetadataKeepsGPS(t *testing.T) {
+	e := newSenv(t)
+	lat, lon := 51.5, -0.12
+	a := e.seed(t, e.alice, mediaFixture(t, "plain.png"), withMime("image/png", "photo"),
+		func(a *repository.Asset) { a.Lat, a.Lon = &lat, &lon })
+	if err := e.media(media.Tools{}, nil).ExtractMetadata(context.Background(), assetPayload(a.ID)); err != nil {
+		t.Fatal(err)
+	}
+	got := e.asset(t, a.ID)
+	if got.Lat == nil || *got.Lat != lat || got.Lon == nil || *got.Lon != lon || *got.Width != 64 {
+		t.Fatalf("gps lost: %v %v", got.Lat, got.Lon)
 	}
 }
 

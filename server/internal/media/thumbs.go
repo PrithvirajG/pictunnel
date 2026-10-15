@@ -47,12 +47,17 @@ func MakeThumbnails(ctx context.Context, t Tools, src, mime string, isVideo bool
 	mime = strings.ToLower(strings.TrimSpace(mime))
 	if !isVideo && pureGoMimes[mime] {
 		img, err := decodeOriented(src)
-		if err == nil {
+		switch {
+		case err == nil:
 			return writeBoth(img, outDir)
-		}
-		// A mislabelled file (e.g. HEIC named .jpg) may still be readable
-		// by ffmpeg; a corrupt one of the declared type fails here.
-		if !errors.Is(err, image.ErrFormat) || t.FFmpeg == "" {
+		case errors.Is(err, errTooLarge):
+			// Decoding would allocate w*h*4+ bytes in this process; let
+			// ffmpeg (out of process, with its own limits) try instead.
+		case errors.Is(err, image.ErrFormat) && t.FFmpeg != "":
+			// A mislabelled file (e.g. HEIC named .jpg) may still be
+			// readable by ffmpeg.
+		default:
+			// A corrupt file of the declared type fails here.
 			return fmt.Errorf("thumbnails: decode: %w", err)
 		}
 	}
@@ -62,13 +67,39 @@ func MakeThumbnails(ctx context.Context, t Tools, src, mime string, isVideo bool
 	return ffmpegThumbs(ctx, t, src, isVideo, outDir)
 }
 
-// decodeOriented decodes a still and applies its EXIF orientation.
+// In-process decode limits: a header can declare up to 65535x65535 (or
+// more) in a few bytes, and Go's decoders allocate the full raster up
+// front. Larger images are only decoded by ffmpeg, out of process.
+const (
+	maxDecodeSide   = 30000
+	maxDecodePixels = 100_000_000
+)
+
+var errTooLarge = errors.New("image too large to decode in-process")
+
+func withinDecodeLimits(w, h int) bool {
+	return w > 0 && h > 0 && w <= maxDecodeSide && h <= maxDecodeSide && int64(w)*int64(h) <= maxDecodePixels
+}
+
+// decodeOriented decodes a still and applies its EXIF orientation. It reads
+// the header first and refuses (errTooLarge) to decode an image outside
+// the in-process limits.
 func decodeOriented(src string) (image.Image, error) {
 	f, err := os.Open(src)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return nil, err
+	}
+	if !withinDecodeLimits(cfg.Width, cfg.Height) {
+		return nil, fmt.Errorf("%w: %dx%d", errTooLarge, cfg.Width, cfg.Height)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return nil, err
@@ -190,14 +221,23 @@ func ffmpegThumbs(ctx context.Context, t Tools, src string, isVideo bool, outDir
 		return err
 	}
 	defer os.Remove(tmp)
+	in, err := inputArgs(src)
+	if err != nil {
+		return err
+	}
+	out, err := fileURL(tmp)
+	if err != nil {
+		return err
+	}
 	extract := func(seekMS int64) error {
 		args := []string{"-nostdin", "-v", "error", "-y"}
 		if seekMS > 0 {
 			args = append(args, "-ss", strconv.FormatFloat(float64(seekMS)/1000, 'f', 3, 64))
 		}
-		args = append(args, "-i", src, "-frames:v", "1",
+		args = append(args, in...)
+		args = append(args, "-frames:v", "1",
 			"-vf", fmt.Sprintf("scale='min(%d,iw)':'min(%d,ih)':force_original_aspect_ratio=decrease", PreviewLongSide, PreviewLongSide),
-			"-q:v", "3", "-update", "1", "-f", "image2", tmp)
+			"-q:v", "3", "-update", "1", "-f", "image2", out)
 		if _, err := run(ctx, ThumbTimeout, t.FFmpeg, args...); err != nil {
 			return err
 		}

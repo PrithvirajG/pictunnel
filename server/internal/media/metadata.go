@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"time"
 
 	"github.com/evanoberholster/imagemeta"
 	"github.com/evanoberholster/imagemeta/meta/exif"
@@ -30,7 +31,9 @@ type ImageMeta struct {
 // ReadImageMeta reads an image's size, EXIF orientation, GPS position and
 // capture date. The size comes from the pure-Go decoders (jpeg, png, gif,
 // webp) or, for other formats, from EXIF dimensions. It fails when neither
-// yields a size; callers may then fall back to ffprobe.
+// yields a size; callers may then fall back to ffprobe. It only parses
+// headers and metadata (image.DecodeConfig, imagemeta), never the pixel
+// data, so a header declaring a huge size allocates nothing.
 func ReadImageMeta(path string) (ImageMeta, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -74,8 +77,38 @@ func ReadImageMeta(path string) (ImageMeta, error) {
 	}
 	if d, ok := probe.FastDate(f, fi.Size(), "image/*"); ok {
 		m.Taken = &d
+	} else if exErr == nil {
+		// FastDate only reads the first 512 KiB; the full EXIF decode above
+		// may have found the date further in.
+		if d, ok := exifDate(ex); ok {
+			m.Taken = &d
+		}
 	}
 	return m, nil
+}
+
+// exifDate is DateTimeOriginal (+ OffsetTimeOriginal) from decoded EXIF,
+// with the same rules as probe.FastDate: the wall clock is taken as UTC
+// unless an offset is recorded, and implausible years are ignored.
+func exifDate(ex exifData) (probe.DateResult, bool) {
+	d := ex.ExifIFD.DateTimeOriginal
+	if d.IsZero() {
+		return probe.DateResult{}, false
+	}
+	wall := time.Date(d.Year(), d.Month(), d.Day(), d.Hour(), d.Minute(), d.Second(), d.Nanosecond(), time.UTC)
+	if y := wall.Year(); y < 1900 || y > 2200 {
+		return probe.DateResult{}, false
+	}
+	res := probe.DateResult{Time: wall, Source: probe.SourceExif}
+	if loc := ex.ExifIFD.OffsetTimeOriginal; loc != nil {
+		_, off := time.Date(2000, 1, 1, 0, 0, 0, 0, loc).Zone()
+		if off%60 == 0 && off >= -16*3600 && off <= 16*3600 {
+			mins := off / 60
+			res.OffsetMinutes = &mins
+			res.Time = wall.Add(-time.Duration(off) * time.Second)
+		}
+	}
+	return res, true
 }
 
 type exifData = exif.Exif

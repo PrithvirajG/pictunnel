@@ -161,7 +161,9 @@ func (s *MediaService) ExtractMetadata(ctx context.Context, payload []byte) erro
 			return fmt.Errorf("extract_metadata: %w", err)
 		}
 		playable := media.Playable(p)
-		transcode = !playable
+		// A file with no video stream (e.g. audio in an mp4) is not
+		// playable as video and transcoding cannot make it so.
+		transcode = !playable && p.VideoCodec != ""
 		apply = append(apply, func(m *repository.MetadataUpdate) {
 			if w, h := p.DisplaySize(); w > 0 && h > 0 {
 				m.Width, m.Height = ptr(int64(w)), ptr(int64(h))
@@ -225,7 +227,9 @@ func (s *MediaService) stillMeta(ctx context.Context, src string) (func(*reposit
 	if err == nil {
 		return func(m *repository.MetadataUpdate) {
 			m.Width, m.Height = ptr(int64(im.Width)), ptr(int64(im.Height))
-			m.Lat, m.Lon = im.Lat, im.Lon
+			if im.Lat != nil && im.Lon != nil {
+				m.Lat, m.Lon = im.Lat, im.Lon // never clear a known position
+			}
 			if im.Taken != nil {
 				setDate(m, *im.Taken)
 			}
