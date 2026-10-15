@@ -22,6 +22,9 @@ const (
 	FPAfterTx2           = "after_tx2"
 	FPAppendAfterFsync   = "append_after_fsync"
 	FPAppendBeforeCommit = "append_before_commit"
+	// FPMediaAfterWrite is hit by media jobs after writing into derived/
+	// and before the transaction that re-checks the asset.
+	FPMediaAfterWrite = "media_after_write"
 )
 
 // failpointError marks an error raised by a failpoint so callers skip every
