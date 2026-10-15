@@ -256,3 +256,23 @@ func (AssetsRepository) StackIDForKey(ctx context.Context, db queries.DBTX, owne
 	}
 	return id, true, nil
 }
+
+// ListByIDs returns the owner's assets whose id is in ids, ordered by id.
+// Other owners' ids are silently skipped.
+func (AssetsRepository) ListByIDs(ctx context.Context, db queries.DBTX, ownerID string, ids []string) ([]Asset, error) {
+	if len(ids) == 0 {
+		return []Asset{}, nil
+	}
+	rows, err := queries.New(db).ListAssetsByIDs(ctx, queries.ListAssetsByIDsParams{OwnerID: ownerID, Ids: ids})
+	if err != nil {
+		return nil, err
+	}
+	return assetsFromRows(rows)
+}
+
+// PathReferenced reports whether any asset's original_path equals path
+// (ASCII case-insensitively, as case-insensitive filesystems compare it).
+func (AssetsRepository) PathReferenced(ctx context.Context, db queries.DBTX, path string) (bool, error) {
+	n, err := queries.New(db).AssetPathReferenced(ctx, path)
+	return n != 0, err
+}

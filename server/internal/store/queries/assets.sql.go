@@ -10,6 +10,17 @@ import (
 	"strings"
 )
 
+const assetPathReferenced = `-- name: AssetPathReferenced :one
+SELECT EXISTS(SELECT 1 FROM assets WHERE original_path = ?1 COLLATE NOCASE)
+`
+
+func (q *Queries) AssetPathReferenced(ctx context.Context, path string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, assetPathReferenced, path)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteAsset = `-- name: DeleteAsset :execrows
 DELETE FROM assets WHERE id = ?
 `
@@ -219,6 +230,77 @@ func (q *Queries) InsertAsset(ctx context.Context, arg InsertAssetParams) error 
 		arg.UpdatedSeq,
 	)
 	return err
+}
+
+const listAssetsByIDs = `-- name: ListAssetsByIDs :many
+SELECT id, owner_id, sha256, size_bytes, mime, kind, filename, original_path, taken_at, taken_at_offset_minutes, taken_at_source, width, height, duration_ms, lat, lon, state, trashed_at, stack_key, stack_id, thumbnails_ready, video_codec, audio_codec, container, playable, created_at, updated_seq FROM assets WHERE owner_id = ?1 AND id IN (/*SLICE:ids*/?) ORDER BY id
+`
+
+type ListAssetsByIDsParams struct {
+	OwnerID string
+	Ids     []string
+}
+
+func (q *Queries) ListAssetsByIDs(ctx context.Context, arg ListAssetsByIDsParams) ([]Asset, error) {
+	query := listAssetsByIDs
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.OwnerID)
+	if len(arg.Ids) > 0 {
+		for _, v := range arg.Ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(arg.Ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Asset
+	for rows.Next() {
+		var i Asset
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Sha256,
+			&i.SizeBytes,
+			&i.Mime,
+			&i.Kind,
+			&i.Filename,
+			&i.OriginalPath,
+			&i.TakenAt,
+			&i.TakenAtOffsetMinutes,
+			&i.TakenAtSource,
+			&i.Width,
+			&i.Height,
+			&i.DurationMs,
+			&i.Lat,
+			&i.Lon,
+			&i.State,
+			&i.TrashedAt,
+			&i.StackKey,
+			&i.StackID,
+			&i.ThumbnailsReady,
+			&i.VideoCodec,
+			&i.AudioCodec,
+			&i.Container,
+			&i.Playable,
+			&i.CreatedAt,
+			&i.UpdatedSeq,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAssetsBySHAs = `-- name: ListAssetsBySHAs :many

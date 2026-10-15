@@ -10,3 +10,6 @@ SELECT * FROM live_videos WHERE asset_id IN (sqlc.slice(asset_ids)) ORDER BY ass
 
 -- name: SumLiveVideoSizes :one
 SELECT CAST(COALESCE(SUM(size_bytes), 0) AS INTEGER) FROM live_videos WHERE owner_id = ?;
+
+-- name: LiveVideoPathReferenced :one
+SELECT EXISTS(SELECT 1 FROM live_videos WHERE original_path = sqlc.arg(path) COLLATE NOCASE);

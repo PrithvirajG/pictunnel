@@ -106,6 +106,17 @@ func (q *Queries) ListLiveVideosByAssets(ctx context.Context, assetIds []string)
 	return items, nil
 }
 
+const liveVideoPathReferenced = `-- name: LiveVideoPathReferenced :one
+SELECT EXISTS(SELECT 1 FROM live_videos WHERE original_path = ?1 COLLATE NOCASE)
+`
+
+func (q *Queries) LiveVideoPathReferenced(ctx context.Context, path string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, liveVideoPathReferenced, path)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const sumLiveVideoSizes = `-- name: SumLiveVideoSizes :one
 SELECT CAST(COALESCE(SUM(size_bytes), 0) AS INTEGER) FROM live_videos WHERE owner_id = ?
 `

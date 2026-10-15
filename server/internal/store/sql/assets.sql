@@ -52,3 +52,9 @@ SELECT * FROM assets WHERE owner_id = ? AND id > ? ORDER BY id LIMIT ?;
 
 -- name: SumAssetSizes :one
 SELECT CAST(COALESCE(SUM(size_bytes), 0) AS INTEGER) FROM assets WHERE owner_id = ?;
+
+-- name: ListAssetsByIDs :many
+SELECT * FROM assets WHERE owner_id = sqlc.arg(owner_id) AND id IN (sqlc.slice(ids)) ORDER BY id;
+
+-- name: AssetPathReferenced :one
+SELECT EXISTS(SELECT 1 FROM assets WHERE original_path = sqlc.arg(path) COLLATE NOCASE);

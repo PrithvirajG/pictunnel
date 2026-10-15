@@ -75,3 +75,20 @@ func (ChangeLogRepository) DeleteBefore(ctx context.Context, db queries.DBTX, t 
 	}
 	return maxSeq, n, nil
 }
+
+// AdvanceHead raises the AUTOINCREMENT sequence (what Head reports) to at
+// least seq, so the next Append returns a seq above it. It never lowers it.
+func (ChangeLogRepository) AdvanceHead(ctx context.Context, db queries.DBTX, seq int64) error {
+	res, err := db.ExecContext(ctx,
+		`UPDATE sqlite_sequence SET seq = ? WHERE name = 'change_log' AND seq < ?`, seq, seq)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return err
+	}
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO sqlite_sequence (name, seq) SELECT 'change_log', ?
+		 WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'change_log')`, seq)
+	return err
+}

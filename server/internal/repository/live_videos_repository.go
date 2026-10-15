@@ -72,3 +72,10 @@ func (LiveVideosRepository) ListByAssets(ctx context.Context, db queries.DBTX, a
 func (LiveVideosRepository) SumSizes(ctx context.Context, db queries.DBTX, ownerID string) (int64, error) {
 	return queries.New(db).SumLiveVideoSizes(ctx, ownerID)
 }
+
+// PathReferenced reports whether any live video's original_path equals path
+// (ASCII case-insensitively).
+func (LiveVideosRepository) PathReferenced(ctx context.Context, db queries.DBTX, path string) (bool, error) {
+	n, err := queries.New(db).LiveVideoPathReferenced(ctx, path)
+	return n != 0, err
+}
