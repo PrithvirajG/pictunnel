@@ -32,3 +32,11 @@ func ClientTooOld(min string) *Error {
 	return newErr("client_too_old", "Client too old", "Update the app to version "+min+" or later.").
 		extra("min_version", min)
 }
+
+// RangeNotSatisfiable is the 416 returned when a Range header cannot be
+// satisfied (OpenAPI RangeNotSatisfiable, code invalid_request).
+func RangeNotSatisfiable() *Error {
+	e := newErr("invalid_request", "Range not satisfiable", "The requested range cannot be satisfied.")
+	e.Status = http.StatusRequestedRangeNotSatisfiable
+	return e
+}

@@ -64,6 +64,9 @@ func TestConstructorsMatchCatalogue(t *testing.T) {
 	if tp.Status != 412 || tp.Code != "invalid_request" || tp.Headers.Get("Tus-Version") != "1.0.0" {
 		t.Errorf("tus precondition: %+v", tp)
 	}
+	if rn := apperr.RangeNotSatisfiable(); rn.Status != 416 || rn.Code != "invalid_request" {
+		t.Errorf("range not satisfiable: %+v", rn)
+	}
 }
 
 func TestHeadersAndAs(t *testing.T) {
