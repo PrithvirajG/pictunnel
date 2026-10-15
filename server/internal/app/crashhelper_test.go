@@ -449,7 +449,7 @@ func (c *syncClient) mustSendPatch(loc string, offset int64) (*http.Response, []
 
 // ---- assertions ----------------------------------------------------------
 
-func queryStrings(t *testing.T, a *app.App, q string, args ...any) []string {
+func queryStrings(t testing.TB, a *app.App, q string, args ...any) []string {
 	t.Helper()
 	rows, err := a.Store().R.Query(q, args...)
 	if err != nil {
@@ -484,7 +484,7 @@ func queryStrings(t *testing.T, a *app.App, q string, args ...any) []string {
 
 // treeFiles lists the files under root as slash paths relative to root
 // with their sizes, sorted.
-func treeFiles(t *testing.T, root string) []string {
+func treeFiles(t testing.TB, root string) []string {
 	t.Helper()
 	var out []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {

@@ -47,6 +47,7 @@ type options struct {
 	ready  func(context.Context) error
 	cfg    []func(*config.Config)
 	limits *httpapi.RateLimits
+	free   func(string) (uint64, error)
 }
 
 // Option customises New.
@@ -70,6 +71,13 @@ func WithConfig(f func(*config.Config)) Option { return func(o *options) { o.cfg
 
 // WithLimits replaces the rate limits.
 func WithLimits(l httpapi.RateLimits) Option { return func(o *options) { o.limits = &l } }
+
+// WithFreeSpace replaces the free-space probe (default: 1 PiB free).
+func WithFreeSpace(f func(string) (uint64, error)) Option { return func(o *options) { o.free = f } }
+
+// StubHeader marks responses written by a WithTus stub, so the contract
+// coverage recorder does not count them as server behaviour.
+const StubHeader = "X-Httpapitest-Stub"
 
 // App is a running test server and the services behind it.
 type App struct {
@@ -145,9 +153,13 @@ func New(t *testing.T, opts ...Option) *App {
 	}
 	a.Cfg = cfg
 
+	free := o.free
+	if free == nil {
+		free = func(string) (uint64, error) { return 1 << 50, nil }
+	}
 	core, err := app.New(context.Background(), app.Options{
 		Config: cfg, Clock: a.Clock, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FreeSpace: func(string) (uint64, error) { return 1 << 50, nil }, DisableScheduler: true, Version: Version,
+		FreeSpace: free, DisableScheduler: true, Version: Version,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +171,11 @@ func New(t *testing.T, opts ...Option) *App {
 
 	deps := core.Deps()
 	if o.tus != nil {
-		deps.Tus = o.tus
+		stub := o.tus
+		deps.Tus = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set(StubHeader, "1")
+			stub.ServeHTTP(w, r)
+		})
 	}
 	if o.info != nil {
 		deps.Info = o.info

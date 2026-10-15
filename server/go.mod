@@ -21,6 +21,7 @@ require (
 	golang.org/x/text v0.43.0
 	golang.org/x/time v0.14.0
 	modernc.org/sqlite v1.60.1
+	pgregory.net/rapid v1.3.0
 )
 
 require (

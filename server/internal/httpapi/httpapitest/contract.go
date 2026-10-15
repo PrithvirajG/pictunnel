@@ -54,8 +54,8 @@ func loadSpec() (*openapi3.T, routers.Router, error) {
 }
 
 // Coverage returns the (operationId → statuses) pairs seen by AssertContract
-// so far (for the Task 17 contract-coverage test). Operation ids are as the
-// embedded spec reports them.
+// so far (S§11.3 contract coverage). Operation ids are as the embedded spec
+// reports them. Responses of a WithTus stub are not recorded.
 func Coverage() map[string][]int {
 	covMu.Lock()
 	defer covMu.Unlock()
@@ -107,7 +107,9 @@ func AssertContract(t testing.TB, req *http.Request, resp *http.Response) {
 		// body check above applies.
 		return
 	}
-	record(route.Operation.OperationID, resp.StatusCode)
+	if resp.Header.Get(StubHeader) == "" {
+		record(route.Operation.OperationID, resp.StatusCode)
+	}
 	if resp.StatusCode == http.StatusNotModified {
 		return // conditional GET; no body, not part of the documented responses
 	}

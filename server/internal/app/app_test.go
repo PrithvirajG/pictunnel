@@ -138,7 +138,7 @@ func upload(t *testing.T, a *app.App, p service.Principal, content []byte, filen
 	})
 }
 
-func count(t *testing.T, a *app.App, q string, args ...any) int {
+func count(t testing.TB, a *app.App, q string, args ...any) int {
 	t.Helper()
 	var n int
 	if err := a.Store().R.QueryRow(q, args...).Scan(&n); err != nil {
