@@ -42,6 +42,10 @@ const (
 	pairRoleLiveVideo = "live_video"
 	changeAssetUpsert = "asset.upsert"
 	stagingDirName    = "uploads"
+	// libraryTmpDirName holds in-flight cross-volume copies on the library
+	// volume. User slugs never start with a dot, so it cannot collide with
+	// <slug>/YYYY/MM/... and no library file ever shares its namespace.
+	libraryTmpDirName = ".pictunnel-tmp"
 )
 
 // JobEnqueuer enqueues a durable job inside a transaction (jobs.Runner).
@@ -201,6 +205,12 @@ func (s *FinalizeService) stagingAbs(sess repository.UploadSession) string {
 
 func (s *FinalizeService) libAbs(rel string) string {
 	return filepath.Join(s.d.LibraryDir, filepath.FromSlash(rel))
+}
+
+// tmpAbs is the cross-volume copy path for a session: a file named by
+// session id in the library temp dir, never next to dest.
+func (s *FinalizeService) tmpAbs(sessionID string) string {
+	return filepath.Join(s.d.LibraryDir, libraryTmpDirName, sessionID+storage.PtpartSuffix)
 }
 
 // internalErr is a 500 internal that keeps the cause for logs.
@@ -377,7 +387,7 @@ func deref(p *string) string {
 // moveAndCommit is steps 3–5 for a finalizing session.
 func (s *FinalizeService) moveAndCommit(ctx context.Context, sess repository.UploadSession, meta sessionMeta, date dateInfo, hooks *storage.CommitHooks) (FinalizeResult, error) {
 	staging, dest := s.stagingAbs(sess), s.libAbs(sess.DestPath)
-	if err := storage.CommitWithHooks(s.d.FS, staging, dest, hooks); err != nil {
+	if err := storage.CommitWithHooks(s.d.FS, staging, dest, s.tmpAbs(sess.ID), hooks); err != nil {
 		var fpe *failpointError
 		if errors.As(err, &fpe) {
 			return FinalizeResult{}, err
@@ -672,8 +682,8 @@ func (s *FinalizeService) failIf(ctx context.Context, id, from, code string, rel
 }
 
 // Recover runs at boot before the listeners open: it resolves every
-// finalizing session by the S§6.2 table, then deletes leftover <dest>.ptpart
-// files of finished sessions and orphan staging files. Idempotent.
+// finalizing session by the S§6.2 table, then deletes orphan copies in the
+// library temp dir and orphan staging files, by session id. Idempotent.
 func (s *FinalizeService) Recover(ctx context.Context) error {
 	sessions, err := s.d.UploadSessions.ListByState(ctx, s.d.Store.R, sessionFinalizing)
 	if err != nil {
@@ -771,7 +781,7 @@ func (s *FinalizeService) recoverSession(ctx context.Context, stale repository.U
 	if err != nil {
 		return FinalizeResult{}, err
 	}
-	part := dest + storage.PtpartSuffix
+	part := s.tmpAbs(sess.ID)
 	date := func(p string) dateInfo {
 		if meta.live() {
 			return dateInfo{}
@@ -804,8 +814,12 @@ func (s *FinalizeService) recoverSession(ctx context.Context, stale repository.U
 	}
 	// Row 3: both were read and neither is valid.
 	s.log.Error("finalize recovery: no valid copy; failing upload", "upload_id", sess.ID)
-	if _, err := s.failIf(ctx, sess.ID, sessionFinalizing, "internal", true); err != nil {
+	applied, err := s.failIf(ctx, sess.ID, sessionFinalizing, "internal", true)
+	if err != nil {
 		return FinalizeResult{}, err
+	}
+	if !applied { // the session moved on meanwhile: touch nothing
+		return FinalizeResult{}, apperr.NotFound()
 	}
 	s.removeQuiet(dest)
 	s.removeQuiet(part)
@@ -814,58 +828,52 @@ func (s *FinalizeService) recoverSession(ctx context.Context, stale repository.U
 }
 
 // stagingName matches staging files this server creates: <uuid>.part.
-var stagingName = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.part$`)
+var stagingName = regexp.MustCompile(`^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.part$`)
 
-// sweep deletes (a) <dest>.ptpart files left by finished (done or failed)
-// sessions, derived from their rows rather than by walking the library, and
-// (b) files in the staging dir named like staging files that belong to no
-// receiving or finalizing session. Nothing else is touched; unreferenced
-// library files belong to the purge_trash orphan sweep.
+// tmpName matches in-flight cross-volume copies: <session-id>.ptpart.
+var tmpName = regexp.MustCompile(`^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.ptpart$`)
+
+// sweep deletes, by session id only, (a) copies in the library temp dir and
+// (b) staging files whose session is neither receiving nor finalizing.
+// It looks at nothing else: files are matched by name pattern inside those two
+// server-owned directories, and the library tree is never walked.
 func (s *FinalizeService) sweep(ctx context.Context) error {
-	keepStaging := map[string]bool{}
-	keepPart := map[string]bool{}
+	live := map[string]bool{}
 	for _, state := range []string{sessionReceiving, sessionFinalizing} {
 		sessions, err := s.d.UploadSessions.ListByState(ctx, s.d.Store.R, state)
 		if err != nil {
 			return err
 		}
 		for _, sess := range sessions {
-			keepStaging[filepath.Clean(s.stagingAbs(sess))] = true
-			if sess.DestPath != "" {
-				keepPart[filepath.Clean(s.libAbs(sess.DestPath)+storage.PtpartSuffix)] = true
-			}
+			live[sess.ID] = true
 		}
 	}
-	for _, state := range []string{sessionDone, sessionFailed} {
-		sessions, err := s.d.UploadSessions.ListByState(ctx, s.d.Store.R, state)
-		if err != nil {
-			return err
+	var errs []error
+	for _, d := range []struct {
+		dir  string
+		name *regexp.Regexp
+		what string
+	}{
+		{filepath.Join(s.d.LibraryDir, libraryTmpDirName), tmpName, "partial copy"},
+		{filepath.Join(s.d.DataDir, stagingDirName), stagingName, "staging file"},
+	} {
+		ents, err := s.d.FS.ReadDir(d.dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
 		}
-		for _, sess := range sessions {
-			if sess.DestPath == "" {
+		if err != nil {
+			errs = append(errs, fmt.Errorf("sweep %s: %w", d.dir, err))
+			continue
+		}
+		for _, e := range ents {
+			m := d.name.FindStringSubmatch(e.Name())
+			if m == nil || !e.Type().IsRegular() || live[m[1]] {
 				continue
 			}
-			part := filepath.Clean(s.libAbs(sess.DestPath) + storage.PtpartSuffix)
-			if keepPart[part] {
-				continue // the path was released and now belongs to another upload
-			}
-			if _, err := s.d.FS.Stat(part); err == nil {
-				s.log.Info("finalize recovery: removing leftover partial copy", "path", part)
-				s.removeQuiet(part)
-			}
-		}
-	}
-	stagingDir := filepath.Join(s.d.DataDir, stagingDirName)
-	ents, err := s.d.FS.ReadDir(stagingDir)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("sweep staging: %w", err)
-	}
-	for _, e := range ents {
-		p := filepath.Join(stagingDir, e.Name())
-		if e.Type().IsRegular() && stagingName.MatchString(e.Name()) && !keepStaging[filepath.Clean(p)] {
-			s.log.Info("finalize recovery: removing orphan staging file", "path", p)
+			p := filepath.Join(d.dir, e.Name())
+			s.log.Info("finalize recovery: removing orphan "+d.what, "path", p)
 			s.removeQuiet(p)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

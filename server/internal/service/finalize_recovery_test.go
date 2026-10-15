@@ -243,3 +243,44 @@ func TestAssignStatErrorIsReturned(t *testing.T) {
 		t.Fatal("Stat error swallowed")
 	}
 }
+
+// TestFinalizeLongNameNeverEndsInPtpart is the re-review reproduction: an
+// over-long "extension" makes the whole name the stem, and truncation to
+// 240 bytes could cut right after ".ptpart", putting asset A at <B>.ptpart.
+func TestFinalizeLongNameNeverEndsInPtpart(t *testing.T) {
+	for _, cross := range []bool{false, true} {
+		t.Run(map[bool]string{false: "same", true: "cross"}[cross], func(t *testing.T) {
+			e := newFenv(t)
+			if cross {
+				e.fs = exdevFS()
+				e.rebuild()
+			}
+			nameB := strings.Repeat("a", 218)
+			nameA := strings.Repeat("a", 218) + ".ptpart." + strings.Repeat("x", 20)
+			rb := e.finalize(t, e.stage(t, []byte("asset B"), map[string]any{"filename": nameB, "mime": "image/jpeg"}))
+			ra := e.finalize(t, e.stage(t, []byte("asset A"), map[string]any{"filename": nameA, "mime": "image/jpeg"}))
+			e.recoverTwice(t)
+			for id, want := range map[string]string{rb.AssetID: "asset B", ra.AssetID: "asset A"} {
+				a, err := repository.AssetsRepository{}.GetByID(ctx, e.st.R, id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.HasSuffix(strings.ToLower(a.OriginalPath), ".ptpart") || len(a.OriginalPath) >= 240 {
+					t.Fatalf("bad path %q (%d bytes)", a.OriginalPath, len(a.OriginalPath))
+				}
+				if got, err := os.ReadFile(e.libPath(a.OriginalPath)); err != nil || string(got) != want {
+					t.Fatalf("%s: %q %v", a.OriginalPath, got, err)
+				}
+			}
+		})
+	}
+}
+
+func TestAssignRejectsPtpartAfterTruncation(t *testing.T) {
+	e := newFenv(t)
+	name := strings.Repeat("b", 218) + ".PtPart." + strings.Repeat("y", 20)
+	got := e.assign(t, AssignInput{Filename: name, Date: may2024, UploadID: "u1"})
+	if strings.HasSuffix(strings.ToLower(got), ".ptpart") || len(got) >= 240 {
+		t.Fatalf("rel %q", got)
+	}
+}

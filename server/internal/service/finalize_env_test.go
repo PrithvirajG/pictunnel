@@ -159,16 +159,19 @@ func exists(p string) bool {
 	return err == nil
 }
 
-// strays lists .ptpart files under the library and every file in staging.
+// tmpPath is where a cross-volume copy of the session is staged.
+func (e *fenv) tmpPath(id string) string {
+	return filepath.Join(e.libDir, ".pictunnel-tmp", id+".ptpart")
+}
+
+// strays lists every file in the library temp dir and in staging.
 func (e *fenv) strays(t *testing.T) []string {
 	t.Helper()
 	var out []string
-	filepath.WalkDir(e.libDir, func(p string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && filepath.Ext(p) == ".ptpart" {
-			out = append(out, p)
-		}
-		return nil
-	})
+	tmps, _ := os.ReadDir(filepath.Join(e.libDir, ".pictunnel-tmp"))
+	for _, d := range tmps {
+		out = append(out, filepath.Join(".pictunnel-tmp", d.Name()))
+	}
 	ents, _ := os.ReadDir(filepath.Join(e.dataDir, "uploads"))
 	for _, d := range ents {
 		out = append(out, filepath.Join("uploads", d.Name()))

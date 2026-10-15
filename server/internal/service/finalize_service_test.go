@@ -510,7 +510,7 @@ func TestRecoverStagingOnly(t *testing.T) {
 	rel := "alice/2026/10/a.jpg"
 	e.setFinalizing(t, s, rel)
 	writeAt(t, e.libPath(rel), []byte("torn")) // invalid dest
-	writeAt(t, e.libPath(rel)+".ptpart", []byte("half"))
+	writeAt(t, e.tmpPath(s.ID), []byte("half"))
 	e.recoverTwice(t)
 	got := e.session(t, s.ID)
 	if got.State != "done" || !got.AssetCreated {
@@ -545,39 +545,76 @@ func TestRecoverNeither(t *testing.T) {
 	}
 }
 
+// libraryFiles maps every file under the library, outside the temp dir, to
+// its content.
+func (e *fenv) libraryFiles(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	filepath.WalkDir(e.libDir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && d.Name() == ".pictunnel-tmp" {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() {
+			b, _ := os.ReadFile(p)
+			out[p] = string(b)
+		}
+		return nil
+	})
+	return out
+}
+
 func TestRecoverSweepsStrays(t *testing.T) {
 	e := newFenv(t)
 	live := e.stage(t, []byte("still receiving"), map[string]any{"filename": "a.jpg", "mime": "image/jpeg"})
-	// A done session whose cross-volume copy left <dest>.ptpart behind (crash
-	// after tx2 before the copy's cleanup is impossible, but a failed remove
-	// is not).
 	done := e.stage(t, []byte("done"), map[string]any{"filename": "d.jpg", "mime": "image/jpeg"})
 	e.finalize(t, done)
-	donePart := e.libPath(e.session(t, done.ID).DestPath) + ".ptpart"
-	writeAt(t, donePart, []byte("x"))
+	// Temp dir: copies of finished or unknown sessions go; a live session's
+	// copy and anything not named <uuid>.ptpart stay.
+	liveTmp := e.tmpPath(live.ID)
+	doneTmp := e.tmpPath(done.ID)
+	orphanTmp := e.tmpPath("01900000-0000-7000-8000-00000000beef")
+	foreignTmp := filepath.Join(e.libDir, ".pictunnel-tmp", "notes.txt")
+	for _, p := range []string{liveTmp, doneTmp, orphanTmp, foreignTmp} {
+		writeAt(t, p, []byte("x"))
+	}
+	// Staging dir: only <uuid>.part files without a live session go.
 	orphanStaging := filepath.Join(e.dataDir, "uploads", "01900000-0000-7000-8000-00000000abcd.part")
 	writeAt(t, orphanStaging, []byte("x"))
 	foreign := filepath.Join(e.dataDir, "uploads", "notes.txt")
 	writeAt(t, foreign, []byte("not ours"))
-	// No session references this one; recovery no longer walks the library,
-	// so it stays (the purge_trash orphan sweep owns unreferenced files).
-	unreferenced := e.libPath("alice/2020/01/x.jpg.ptpart")
-	writeAt(t, unreferenced, []byte("x"))
-	keep := e.libPath("alice/2020/01/keep.jpg")
-	writeAt(t, keep, []byte("user file"))
+	// Library: nothing outside the temp dir is ever touched, whatever its name.
+	writeAt(t, e.libPath(e.session(t, done.ID).DestPath)+".ptpart", []byte("named like a partial"))
+	writeAt(t, e.libPath("alice/2020/01/x.jpg.ptpart"), []byte("x"))
+	writeAt(t, e.libPath("alice/2020/01/keep.jpg"), []byte("user file"))
+	writeAt(t, e.libPath("01900000-0000-7000-8000-00000000beef.ptpart"), []byte("root"))
+	before := e.libraryFiles(t)
+
 	e.recoverTwice(t)
-	if exists(orphanStaging) || exists(donePart) {
+
+	if exists(orphanStaging) || exists(doneTmp) || exists(orphanTmp) {
 		t.Fatal("strays not swept")
 	}
-	if !exists(live.StagingPath) || !exists(keep) || !exists(foreign) || !exists(unreferenced) {
-		t.Fatal("live staging, a foreign file or a library file was removed")
+	if !exists(live.StagingPath) || !exists(liveTmp) || !exists(foreign) || !exists(foreignTmp) {
+		t.Fatal("live or foreign file removed")
+	}
+	after := e.libraryFiles(t)
+	if len(after) != len(before) {
+		t.Fatalf("library files changed: before %d after %d", len(before), len(after))
+	}
+	for p, c := range before {
+		if after[p] != c {
+			t.Fatalf("library file %s changed or removed", p)
+		}
 	}
 	var names []string
 	for _, p := range e.strays(t) {
 		names = append(names, filepath.Base(p))
 	}
 	sort.Strings(names)
-	want := []string{filepath.Base(live.StagingPath), "notes.txt", "x.jpg.ptpart"}
+	want := []string{filepath.Base(live.StagingPath), filepath.Base(liveTmp), "notes.txt", "notes.txt"}
 	sort.Strings(want)
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("remaining %v, want %v", names, want)

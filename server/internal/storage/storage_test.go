@@ -25,7 +25,7 @@ func TestCommitSameVolume(t *testing.T) {
 	os.MkdirAll(filepath.Dir(src), 0o755)
 	writeFile(t, src, "hello")
 	dest := filepath.Join(d, "lib", "2024", "a.jpg")
-	if err := storage.Commit(storage.OS(), src, dest); err != nil {
+	if err := storage.Commit(storage.OS(), src, dest, tmpPath(d)); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(dest)
@@ -50,7 +50,7 @@ func TestCommitCrossVolume(t *testing.T) {
 		}
 		return nil
 	}}
-	if err := storage.Commit(ffs, src, dest); err != nil {
+	if err := storage.Commit(ffs, src, dest, tmpPath(d)); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(dest)
@@ -60,7 +60,7 @@ func TestCommitCrossVolume(t *testing.T) {
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
 		t.Fatal("staging remains")
 	}
-	if _, err := os.Stat(dest + ".ptpart"); !os.IsNotExist(err) {
+	if _, err := os.Stat(tmpPath(d)); !os.IsNotExist(err) {
 		t.Fatal(".ptpart remains")
 	}
 }
@@ -85,10 +85,10 @@ func TestCommitCrossVolumePtpartCleanupOnRenameFailure(t *testing.T) {
 		}
 		return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.EIO}
 	}}
-	if err := storage.Commit(ffs, src, dest); err == nil {
+	if err := storage.Commit(ffs, src, dest, tmpPath(d)); err == nil {
 		t.Fatal("Commit succeeded")
 	}
-	if _, err := os.Stat(dest + ".ptpart"); !os.IsNotExist(err) {
+	if _, err := os.Stat(tmpPath(d)); !os.IsNotExist(err) {
 		t.Fatal(".ptpart left behind")
 	}
 	if _, err := os.Stat(dest); !os.IsNotExist(err) {
@@ -115,10 +115,10 @@ func TestCommitCrossVolumePtpartCleanupOnWriteFailure(t *testing.T) {
 			return nil
 		},
 	}
-	if err := storage.Commit(ffs, src, dest); err == nil {
+	if err := storage.Commit(ffs, src, dest, tmpPath(d)); err == nil {
 		t.Fatal("Commit succeeded")
 	}
-	if _, err := os.Stat(dest + ".ptpart"); !os.IsNotExist(err) {
+	if _, err := os.Stat(tmpPath(d)); !os.IsNotExist(err) {
 		t.Fatal(".ptpart left behind")
 	}
 	if _, err := os.Stat(src); err != nil {
@@ -159,7 +159,7 @@ func TestCommitHooks(t *testing.T) {
 				return boom
 			},
 		}
-		err := storage.CommitWithHooks(fsys, src, dest, h)
+		err := storage.CommitWithHooks(fsys, src, dest, tmpPath(d), h)
 		if !errors.Is(err, boom) {
 			t.Fatalf("cross=%v err = %v, want hook error", cross, err)
 		}
@@ -187,12 +187,50 @@ func TestCommitAfterCopyHookLeavesPtpart(t *testing.T) {
 		return nil
 	}}
 	boom := errors.New("crash")
-	err := storage.CommitWithHooks(ffs, src, dest, &storage.CommitHooks{AfterCopy: func() error { return boom }})
+	err := storage.CommitWithHooks(ffs, src, dest, tmpPath(d), &storage.CommitHooks{AfterCopy: func() error { return boom }})
 	if !errors.Is(err, boom) {
 		t.Fatal(err)
 	}
 	// Like a crash, the copied .ptpart stays for recovery to sweep.
-	if _, err := os.Stat(dest + ".ptpart"); err != nil {
+	if _, err := os.Stat(tmpPath(d)); err != nil {
 		t.Fatal(".ptpart missing after simulated crash")
+	}
+}
+
+// tmpPath is where cross-volume copies are staged in these tests: a
+// dedicated directory beside the library, never next to dest.
+func tmpPath(d string) string { return filepath.Join(d, "lib", ".pictunnel-tmp", "s1.ptpart") }
+
+func TestCommitCrossVolumeUsesTmpPathOnly(t *testing.T) {
+	d := t.TempDir()
+	src := filepath.Join(d, "a.part")
+	writeFile(t, src, "new")
+	dest := filepath.Join(d, "lib", "a")
+	// A library file that sits at dest+".ptpart" must never be touched.
+	neighbour := dest + ".ptpart"
+	os.MkdirAll(filepath.Dir(neighbour), 0o755)
+	writeFile(t, neighbour, "precious")
+	var renames []string
+	ffs := &storagetest.FaultFS{FS: storage.OS(), RenameErr: func(from, to string) error {
+		renames = append(renames, from+" -> "+to)
+		if from == src {
+			return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.EXDEV}
+		}
+		return nil
+	}}
+	if err := storage.Commit(ffs, src, dest, tmpPath(d)); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(neighbour); string(b) != "precious" {
+		t.Fatalf("neighbour = %q", b)
+	}
+	if b, _ := os.ReadFile(dest); string(b) != "new" {
+		t.Fatalf("dest = %q", b)
+	}
+	if len(renames) != 2 || renames[1] != tmpPath(d)+" -> "+dest {
+		t.Fatalf("renames %v", renames)
+	}
+	if _, err := os.Stat(tmpPath(d)); !os.IsNotExist(err) {
+		t.Fatal("tmp copy remains")
 	}
 }

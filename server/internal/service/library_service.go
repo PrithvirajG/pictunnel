@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/PrithvirajG/pictunnel/server/internal/clock"
@@ -81,6 +82,11 @@ func (s *LibraryService) Assign(ctx context.Context, tx queries.DBTX, in AssignI
 			suffix = "~" + strconv.Itoa(n) + ext
 		}
 		rel := storage.FitPath(dir, stem, suffix, maxRelPathBytes)
+		if hasPtpartSuffix(rel) {
+			// Truncation can cut a long stem right after ".ptpart"; the next
+			// probe appends "~N", so it cannot end that way again.
+			continue
+		}
 		key := storage.PathKey(rel)
 		taken, err := s.d.LibraryPaths.Exists(ctx, tx, key)
 		if err != nil {
@@ -108,6 +114,13 @@ func (s *LibraryService) Assign(ctx context.Context, tx queries.DBTX, in AssignI
 	return "", fmt.Errorf("library: no free name for %q in %q", name, dir)
 }
 
+// hasPtpartSuffix reports whether p ends in the in-flight copy extension
+// (ASCII case-insensitively, as case-insensitive filesystems compare it).
+func hasPtpartSuffix(p string) bool {
+	n := len(p) - len(storage.PtpartSuffix)
+	return n >= 0 && strings.EqualFold(p[n:], storage.PtpartSuffix)
+}
+
 func splitExt(name string) (string, string) {
 	stem, ext := storage.SplitExt(name)
 	if len(ext) > maxExtBytes {
@@ -120,7 +133,8 @@ func (s *LibraryService) onDisk(rel string) (bool, error) {
 	if s.d.FS == nil || s.d.LibraryDir == "" {
 		return false, nil
 	}
-	// The cross-volume copy writes <dest>.ptpart, so that name must be free too.
+	// Defence in depth: copies live in the library temp dir, but a name whose
+	// <name>.ptpart exists on disk is still treated as taken.
 	abs := filepath.Join(s.d.LibraryDir, filepath.FromSlash(rel))
 	for _, p := range []string{abs, abs + storage.PtpartSuffix} {
 		_, err := s.d.FS.Stat(p)
