@@ -95,8 +95,9 @@ func AssertContract(t testing.TB, req *http.Request, resp *http.Response) {
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 
+	// A HEAD response carries the headers of the problem but never its body.
 	ct, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if ct == "application/problem+json" {
+	if ct == "application/problem+json" && req.Method != http.MethodHead {
 		assertProblem(t, doc, resp.StatusCode, body)
 	}
 

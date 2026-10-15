@@ -495,6 +495,17 @@ func (s *UploadService) Head(ctx context.Context, p Principal, id string) (Uploa
 	})
 }
 
+// Peek reports the caller's session without taking its lock, so its offset
+// may be stale while a request is writing. The tus handler uses it only to
+// bound a PATCH body by the (immutable) Upload-Length before reading it.
+func (s *UploadService) Peek(ctx context.Context, p Principal, id string) (UploadView, error) {
+	sess, err := s.load(ctx, p, id)
+	if err != nil {
+		return UploadView{}, err
+	}
+	return viewOf(sess), nil
+}
+
 // underLock re-reads the session with lk held and applies the common
 // rules: not receiving → its view (finalizing is upload_locked: a finalize
 // or recovery owns it), expired → expire and not_found, fully received →

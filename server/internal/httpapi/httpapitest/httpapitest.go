@@ -23,10 +23,12 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/PrithvirajG/pictunnel/server/internal/apperr"
 	"github.com/PrithvirajG/pictunnel/server/internal/clock/clocktest"
 	"github.com/PrithvirajG/pictunnel/server/internal/config"
 	"github.com/PrithvirajG/pictunnel/server/internal/httpapi"
 	"github.com/PrithvirajG/pictunnel/server/internal/httpapi/gen"
+	"github.com/PrithvirajG/pictunnel/server/internal/httpapi/tus"
 	"github.com/PrithvirajG/pictunnel/server/internal/jobs"
 	"github.com/PrithvirajG/pictunnel/server/internal/media/probe"
 	"github.com/PrithvirajG/pictunnel/server/internal/repository"
@@ -61,7 +63,7 @@ type Option func(*options)
 // without Secure).
 func Local() Option { return func(o *options) { o.local = true } }
 
-// WithTus mounts h on /api/v1/uploads.
+// WithTus mounts h on /api/v1/uploads instead of the real tus handler.
 func WithTus(h http.Handler) Option { return func(o *options) { o.tus = h } }
 
 // WithInfo replaces the server info source.
@@ -205,15 +207,29 @@ func New(t *testing.T, opts ...Option) *App {
 			}
 		}
 	}
+	tusHandler := o.tus
+	if tusHandler == nil {
+		tusHandler = tus.New(a.Upload, TusPrincipal, cfg, log, httpapi.WriteProblem)
+	}
 	a.Handler = httpapi.NewHandler(httpapi.Deps{
 		Users: a.Users, Auth: a.Auth, Devices: a.Devices, Pairing: a.Pairing, Check: a.Check, Feed: a.Feed,
-		Assets: a.Assets, Trash: a.Trash, Tus: o.tus, Info: info, Ready: o.ready, Cfg: cfg, Clock: clk,
+		Assets: a.Assets, Trash: a.Trash, Tus: tusHandler, Info: info, Ready: o.ready, Cfg: cfg, Clock: clk,
 		Log: log, Limits: o.limits,
 	}, o.local)
 	a.Server = httptest.NewServer(a.Handler)
 	t.Cleanup(a.Server.Close)
 	a.client = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return a
+}
+
+// TusPrincipal is the tus handler's auth func: the principal the auth
+// middleware stored, else unauthorized.
+func TusPrincipal(r *http.Request) (service.Principal, error) {
+	p, ok := httpapi.PrincipalFrom(r.Context())
+	if !ok {
+		return service.Principal{}, apperr.Unauthorized()
+	}
+	return p, nil
 }
 
 // Req builds a request to path. body may be nil, a string (sent as is) or
