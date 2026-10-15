@@ -154,7 +154,8 @@ func uploadInternal(op string, err error) error {
 
 // expired reports whether a receiving session is past its expiry.
 func (s *UploadService) expired(sess repository.UploadSession) bool {
-	return sess.State == sessionReceiving && !s.d.Clock.Now().Before(sess.ExpiresAt)
+	// Strictly after, like ListExpiredUploadSessions (expires_at < now).
+	return sess.State == sessionReceiving && s.d.Clock.Now().After(sess.ExpiresAt)
 }
 
 // load reads the caller's session; other owners' and failed sessions are
@@ -273,8 +274,12 @@ func (s *UploadService) Create(ctx context.Context, p Principal, in CreateInput)
 			v, err := s.appendSession(ctx, p, sess.ID, 0, in.Body, in.BodyChecksum)
 			if isCode(err, "upload_locked") || isCode(err, "offset_mismatch") {
 				// Another device is writing it: the body is discarded and the
-				// client resumes from the reported offset.
-				return s.Head(ctx, p, sess.ID)
+				// client resumes from the committed offset (201, P§7.3 #4).
+				cur, lerr := s.load(ctx, p, sess.ID)
+				if lerr != nil {
+					return UploadView{}, lerr
+				}
+				return viewOf(cur), nil
 			}
 			return v, err
 		}
@@ -380,6 +385,21 @@ func (s *UploadService) createTx(ctx context.Context, p Principal, length int64,
 		if err == nil {
 			if cur.Length != length {
 				return apperr.LengthMismatch()
+			}
+			// Record the joining device's local_id so finalize links it too.
+			sm, err := parseSessionMeta(cur)
+			if err != nil {
+				return err
+			}
+			if sm.addJoined(cur.DeviceID, p.DeviceID, meta.LocalID) {
+				mj, err := json.Marshal(sm)
+				if err != nil {
+					return err
+				}
+				if err := s.d.Sessions.SetMetaJSON(ctx, tx, cur.ID, string(mj)); err != nil {
+					return err
+				}
+				cur.MetaJSON = string(mj)
 			}
 			res = createResult{sess: cur, outcome: 4}
 			return nil
@@ -727,7 +747,9 @@ func (s *UploadService) finalizeLocked(ctx context.Context, lk *uploadLock, sess
 		}
 	}
 	digest := hex.EncodeToString(lk.hasher.Sum(nil))
-	res, err := s.d.Finalize.Finalize(ctx, sess, digest)
+	// The journal must not stop halfway because the client left after the
+	// last byte.
+	res, err := s.d.Finalize.Finalize(context.WithoutCancel(ctx), sess, digest)
 	if err != nil {
 		return UploadView{}, err
 	}

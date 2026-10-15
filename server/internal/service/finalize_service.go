@@ -119,6 +119,30 @@ type sessionMeta struct {
 	PairSHA256        string     `json:"pair_sha256,omitempty"`
 	StackKey          string     `json:"stack_key,omitempty"`
 	OverrideTombstone bool       `json:"override_tombstone,omitempty"`
+	// JoinedSources are other (device, local_id) pairs that joined this
+	// session cooperatively (P§7.3 outcome #4); each is linked like LocalID.
+	JoinedSources []joinedSource `json:"joined_sources,omitempty"`
+}
+
+// joinedSource is one device's local identifier for the session's content.
+type joinedSource struct {
+	DeviceID string `json:"device_id"`
+	LocalID  string `json:"local_id"`
+}
+
+// addJoined records (deviceID, localID) unless it is the session's own
+// source or already recorded; it reports whether meta changed.
+func (m *sessionMeta) addJoined(sessDevice, deviceID, localID string) bool {
+	if localID == "" || (deviceID == sessDevice && localID == m.LocalID) {
+		return false
+	}
+	for _, j := range m.JoinedSources {
+		if j.DeviceID == deviceID && j.LocalID == localID {
+			return false
+		}
+	}
+	m.JoinedSources = append(m.JoinedSources, joinedSource{DeviceID: deviceID, LocalID: localID})
+	return true
 }
 
 func parseSessionMeta(sess repository.UploadSession) (sessionMeta, error) {
@@ -465,11 +489,20 @@ func (s *FinalizeService) probeDate(p string, meta sessionMeta) dateInfo {
 	return resolveDate(meta, pr, ok, now)
 }
 
+// linkSource upserts asset_sources for the session's own local_id and for
+// every device that joined the session.
 func (s *FinalizeService) linkSource(ctx context.Context, tx *sql.Tx, sess repository.UploadSession, meta sessionMeta, assetID string, now time.Time) error {
-	if meta.LocalID == "" {
-		return nil
+	if meta.LocalID != "" {
+		if err := s.d.AssetSources.Upsert(ctx, tx, sess.DeviceID, meta.LocalID, assetID, now); err != nil {
+			return err
+		}
 	}
-	return s.d.AssetSources.Upsert(ctx, tx, sess.DeviceID, meta.LocalID, assetID, now)
+	for _, j := range meta.JoinedSources {
+		if err := s.d.AssetSources.Upsert(ctx, tx, j.DeviceID, j.LocalID, assetID, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // appendUpsert appends asset.upsert, compacts the asset's earlier entries and
@@ -522,6 +555,12 @@ func (s *FinalizeService) commitAsset(ctx context.Context, sess repository.Uploa
 			out.failure = apperr.NotFound()
 			return nil
 		}
+		// A device may have joined after tx1: link the sources as they are now.
+		curMeta, err := parseSessionMeta(cur)
+		if err != nil {
+			return err
+		}
+		meta.JoinedSources = curMeta.JoinedSources
 		now := s.d.Clock.Now()
 		if meta.live() {
 			out, err = s.commitLive(ctx, tx, sess, meta, now)

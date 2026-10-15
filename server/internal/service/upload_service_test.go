@@ -872,19 +872,37 @@ func TestOtherOwnerNotFound(t *testing.T) {
 	}
 }
 
+// Vector two_devices_same_hash_cooperative.
 func TestCooperativeDevices(t *testing.T) {
 	e := newUenv(t)
 	content := payload(3<<20, 37)
-	v := e.create(t, content, false)
+	am := metaFor(content, "VID_0009.MP4")
+	am.LocalID = "a-9"
+	v, err := e.up.Create(ctx, e.p, CreateInput{Length: 3 << 20, Meta: am})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := e.up.Append(ctx, e.p, v.ID, 0, bytes.NewReader(content[:1<<20]), nil); err != nil {
 		t.Fatal(err)
 	}
 	b := e.p
 	b.DeviceID = repotest.SeedDevice(t, e.st, e.owner, ids.New())
 	b.Platform = "ios"
-	bv, err := e.up.Create(ctx, b, CreateInput{Length: 3 << 20, Meta: metaFor(content, "IMG_7731.MOV")})
-	if err != nil || bv.ID != v.ID || bv.Offset != 1<<20 {
-		t.Fatalf("%+v %v", bv, err)
+	bm := metaFor(content, "IMG_7731.MOV")
+	bm.LocalID = "b-3"
+	for i := 0; i < 2; i++ { // a retried create does not duplicate the join
+		bv, err := e.up.Create(ctx, b, CreateInput{Length: 3 << 20, Meta: bm})
+		if err != nil || bv.ID != v.ID || bv.Offset != 1<<20 {
+			t.Fatalf("%+v %v", bv, err)
+		}
+	}
+	// A's own retry adds nothing.
+	if _, err := e.up.Create(ctx, e.p, CreateInput{Length: 3 << 20, Meta: am}); err != nil {
+		t.Fatal(err)
+	}
+	sm, _ := parseSessionMeta(e.session(t, v.ID))
+	if len(sm.JoinedSources) != 1 || sm.JoinedSources[0] != (joinedSource{DeviceID: b.DeviceID, LocalID: "b-3"}) || sm.LocalID != "a-9" {
+		t.Fatalf("meta %+v", sm)
 	}
 	got, err := e.up.Append(ctx, b, v.ID, 1<<20, bytes.NewReader(content[1<<20:]), nil)
 	if err != nil {
@@ -894,6 +912,92 @@ func TestCooperativeDevices(t *testing.T) {
 	h, err := e.up.Head(ctx, e.p, v.ID)
 	if err != nil || h.AssetID != got.AssetID {
 		t.Fatalf("%+v %v", h, err)
+	}
+	src, err := repository.AssetSourcesRepository{}.ListByAsset(ctx, e.st.R, got.AssetID)
+	if err != nil || len(src) != 2 {
+		t.Fatalf("sources %+v %v", src, err)
+	}
+	want := map[string]string{e.device: "a-9", b.DeviceID: "b-3"}
+	for _, r := range src {
+		if want[r.DeviceID] != r.LocalID {
+			t.Fatalf("sources %+v", src)
+		}
+	}
+}
+
+func TestFinalizeLinksJoinedSourcesWhenAssetExists(t *testing.T) {
+	e := newUenv(t)
+	content := payload(2000, 38)
+	e.seedAsset(t, content)
+	a, _ := e.assetBySHA(t, shaHex(content))
+	other := repotest.SeedDevice(t, e.st, e.owner, ids.New())
+	s := e.stage(t, content, map[string]any{
+		"filename": "x.jpg", "mime": "image/jpeg", "local_id": "own-1",
+		"joined_sources": []map[string]string{{"device_id": other, "local_id": "j-1"}},
+	})
+	r := e.finalize(t, s)
+	if r.AssetID != a.ID || r.Created {
+		t.Fatalf("result %+v", r)
+	}
+	src, _ := repository.AssetSourcesRepository{}.ListByAsset(ctx, e.st.R, a.ID)
+	if len(src) != 2 {
+		t.Fatalf("sources %+v", src)
+	}
+}
+
+// P§7.3 #4: a create that finds the session busy answers at once with 201
+// and the committed offset.
+func TestCreateOutcome4WhileLockedReturnsPromptly(t *testing.T) {
+	e := newUenv(t)
+	content := payload(5000, 39)
+	v := e.create(t, content, false)
+	pr, pw := io.Pipe()
+	done := make(chan struct{})
+	go func() {
+		e.up.Append(ctx, e.p, v.ID, 0, pr, nil)
+		close(done)
+	}()
+	pw.Write(content[:100]) // A holds the lock mid-PATCH
+	b := e.p
+	b.DeviceID = repotest.SeedDevice(t, e.st, e.owner, ids.New())
+	start := time.Now()
+	bv, err := e.up.Create(ctx, b, CreateInput{Length: 5000, Meta: metaFor(content, "b.jpg"), Body: bytes.NewReader(content)})
+	if err != nil || bv.ID != v.ID || bv.Offset != 0 || bv.Done {
+		t.Fatalf("%+v %v", bv, err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("create took %v", d)
+	}
+	pw.Write(content[100:])
+	pw.Close()
+	<-done
+	h, err := e.up.Head(ctx, e.p, v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkDone(t, h, true)
+}
+
+// HEAD and the expire job agree: a session is expired only strictly after
+// expires_at.
+func TestExpiryBoundary(t *testing.T) {
+	e := newUenv(t)
+	v := e.create(t, payload(4000, 40), false)
+	e.clk.Set(v.ExpiresAt)
+	if _, err := e.up.Head(ctx, e.p, v.ID); err != nil {
+		t.Fatalf("at expires_at: %v", err)
+	}
+	if err := e.up.ExpireSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if s := e.session(t, v.ID); s.State != "receiving" {
+		t.Fatalf("state %s", s.State)
+	}
+	e.clk.Advance(time.Millisecond)
+	_, err := e.up.Head(ctx, e.p, v.ID)
+	wantUpCode(t, err, "not_found")
+	if s := e.session(t, v.ID); s.State != "failed" {
+		t.Fatalf("state %s", s.State)
 	}
 }
 

@@ -165,6 +165,16 @@ func (UploadSessionsRepository) Delete(ctx context.Context, db queries.DBTX, id 
 	return requireRow(queries.New(db).DeleteUploadSession(ctx, id))
 }
 
+// SetMetaJSON replaces meta_json (cooperative joins record their sources).
+// Raw SQL like ChangeLog.Head; fold into sqlc at the next regen.
+func (UploadSessionsRepository) SetMetaJSON(ctx context.Context, db queries.DBTX, id, metaJSON string) error {
+	res, err := db.ExecContext(ctx, "UPDATE upload_sessions SET meta_json = ? WHERE id = ?", metaJSON, id)
+	if err != nil {
+		return err
+	}
+	return requireRow(res.RowsAffected())
+}
+
 // SumActiveLengths returns the total declared length of the owner's active
 // sessions (for quota reservation).
 func (UploadSessionsRepository) SumActiveLengths(ctx context.Context, db queries.DBTX, ownerID string) (int64, error) {
