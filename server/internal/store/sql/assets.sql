@@ -58,3 +58,8 @@ SELECT * FROM assets WHERE owner_id = sqlc.arg(owner_id) AND id IN (sqlc.slice(i
 
 -- name: AssetPathReferenced :one
 SELECT EXISTS(SELECT 1 FROM assets WHERE original_path = sqlc.arg(path) COLLATE NOCASE);
+
+-- name: ListAssetsMediaPending :many
+SELECT id, kind, thumbnails_ready, playable FROM assets
+WHERE thumbnails_ready = 0 OR (kind = 'video' AND (playable IS NULL OR playable = 0))
+ORDER BY id;

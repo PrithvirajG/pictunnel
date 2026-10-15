@@ -151,6 +151,17 @@ func (r *Runner) wakeCh() <-chan struct{} {
 	return r.wake
 }
 
+// DeclarePeriodic records the periodic kinds without starting the scheduler,
+// so RunNow treats them as periodic (a run with a nil payload when nothing
+// is pending). Start declares its periodic list itself.
+func (r *Runner) DeclarePeriodic(periodic []Periodic) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, p := range periodic {
+		r.periodic[p.Kind] = p.Every
+	}
+}
+
 // Start launches the worker pools and the scheduler. Workers poll every 1 s
 // and wake early on Enqueue. ctx is passed to handlers; Stop only ends polling.
 func (r *Runner) Start(ctx context.Context, pools []Pool, periodic []Periodic) {

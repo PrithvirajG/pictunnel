@@ -374,6 +374,47 @@ func (q *Queries) ListAssetsBySHAs(ctx context.Context, arg ListAssetsBySHAsPara
 	return items, nil
 }
 
+const listAssetsMediaPending = `-- name: ListAssetsMediaPending :many
+SELECT id, kind, thumbnails_ready, playable FROM assets
+WHERE thumbnails_ready = 0 OR (kind = 'video' AND (playable IS NULL OR playable = 0))
+ORDER BY id
+`
+
+type ListAssetsMediaPendingRow struct {
+	ID              string
+	Kind            string
+	ThumbnailsReady int64
+	Playable        *int64
+}
+
+func (q *Queries) ListAssetsMediaPending(ctx context.Context) ([]ListAssetsMediaPendingRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAssetsMediaPending)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssetsMediaPendingRow
+	for rows.Next() {
+		var i ListAssetsMediaPendingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.ThumbnailsReady,
+			&i.Playable,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAssetsTrashedBefore = `-- name: ListAssetsTrashedBefore :many
 SELECT id, owner_id, sha256, size_bytes, mime, kind, filename, original_path, taken_at, taken_at_offset_minutes, taken_at_source, width, height, duration_ms, lat, lon, state, trashed_at, stack_key, stack_id, thumbnails_ready, video_codec, audio_codec, container, playable, created_at, updated_seq FROM assets
 WHERE state = 'trashed' AND trashed_at < ?1

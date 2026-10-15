@@ -276,3 +276,26 @@ func (AssetsRepository) PathReferenced(ctx context.Context, db queries.DBTX, pat
 	n, err := queries.New(db).AssetPathReferenced(ctx, path)
 	return n != 0, err
 }
+
+// MediaPending is an asset whose derived media may be incomplete.
+type MediaPending struct {
+	ID              string
+	Kind            string
+	ThumbnailsReady bool
+	Playable        *bool
+}
+
+// ListMediaPending returns, ordered by id, the assets without thumbnails
+// and the videos whose playability is unknown or false (boot re-enqueues
+// their media jobs).
+func (AssetsRepository) ListMediaPending(ctx context.Context, db queries.DBTX) ([]MediaPending, error) {
+	rows, err := queries.New(db).ListAssetsMediaPending(ctx)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]MediaPending, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, MediaPending{ID: r.ID, Kind: r.Kind, ThumbnailsReady: r.ThumbnailsReady != 0, Playable: intPtrToBool(r.Playable)})
+	}
+	return out, nil
+}

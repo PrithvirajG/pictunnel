@@ -103,12 +103,20 @@ func TestSetupToken(t *testing.T) {
 	if err != nil || !created || tok == "" {
 		t.Fatalf("EnsureSetupToken = %q, %v, %v", tok, created, err)
 	}
-	tok2, created2, err := e.users.EnsureSetupToken(ctx)
-	if err != nil || created2 || tok2 != "" {
-		t.Fatalf("second EnsureSetupToken = %q, %v, %v; want no new token", tok2, created2, err)
-	}
 	if !e.users.CheckSetupToken(ctx, tok) {
 		t.Fatal("correct setup token rejected")
+	}
+	// Every boot before setup rotates the token: the old one stops working.
+	tok2, created2, err := e.users.EnsureSetupToken(ctx)
+	if err != nil || !created2 || tok2 == "" || tok2 == tok {
+		t.Fatalf("second EnsureSetupToken = %q, %v, %v; want a fresh token", tok2, created2, err)
+	}
+	if e.users.CheckSetupToken(ctx, tok) {
+		t.Fatal("rotated-out setup token still accepted")
+	}
+	tok = tok2
+	if !e.users.CheckSetupToken(ctx, tok) {
+		t.Fatal("current setup token rejected")
 	}
 	for _, bad := range []string{"", tok + "x", strings.ToUpper(tok)} {
 		if bad != tok && e.users.CheckSetupToken(ctx, bad) {

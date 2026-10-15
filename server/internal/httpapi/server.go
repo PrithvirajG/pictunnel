@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/PrithvirajG/pictunnel/server/internal/apperr"
 	"github.com/PrithvirajG/pictunnel/server/internal/clock"
@@ -98,15 +99,40 @@ func NewHandler(d Deps, local bool) http.Handler {
 		api.ServeHTTP(w, r)
 	}))
 
-	// Outermost first: request id → loopback host guard → recover → access
-	// log → version gate → auth → CSRF → rate limit.
+	// Outermost first: tus header → request id → loopback host guard →
+	// recover → access log → version gate → auth → CSRF → rate limit.
 	var h http.Handler = mux
 	for _, mw := range []func(http.Handler) http.Handler{
-		s.rateLimit, s.csrf, s.auth, s.versionGate, s.accessLog, s.recoverer, s.hostGuard, s.requestID,
+		s.rateLimit, s.csrf, s.auth, s.versionGate, s.accessLog, s.recoverer, s.hostGuard, s.requestID, tusResumable,
 	} {
 		h = mw(h)
 	}
 	return h
+}
+
+// tusResumableVersion is the tus protocol version the upload resources speak.
+const tusResumableVersion = "1.0.0"
+
+// tusResumable sets Tus-Resumable on every non-OPTIONS response under
+// /api/v1/uploads, so errors written by middleware before the tus handler
+// (401, 403, 404, 426, 429, 500) still carry the header tus 1.0 requires.
+func tusResumable(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodOptions && (r.URL.Path == pathUploads || strings.HasPrefix(r.URL.Path, pathUploads+"/")) {
+			w.Header().Set("Tus-Resumable", tusResumableVersion)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// TusPrincipal is the tus handler's auth func: the principal the auth
+// middleware stored, else unauthorized.
+func TusPrincipal(r *http.Request) (service.Principal, error) {
+	p, ok := PrincipalFrom(r.Context())
+	if !ok {
+		return service.Principal{}, apperr.Unauthorized()
+	}
+	return p, nil
 }
 
 // requestError maps strict-server decode errors to 400 invalid_request.

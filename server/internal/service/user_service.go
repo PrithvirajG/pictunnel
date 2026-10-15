@@ -182,9 +182,10 @@ func (s *UserService) ResetPassword(ctx context.Context, username string) (strin
 	return pw, nil
 }
 
-// EnsureSetupToken generates the setup hijack-guard token (S§4.1) while no
-// user exists and none was generated before. The token is returned only when
-// created; only its hash is stored.
+// EnsureSetupToken generates a fresh setup hijack-guard token (S§4.1)
+// while no user exists, replacing any earlier one, so every boot before
+// setup prints a working token. Once a user exists it does nothing and
+// returns created=false. Only the hash is stored.
 func (s *UserService) EnsureSetupToken(ctx context.Context) (token string, created bool, err error) {
 	err = s.d.Store.WithTx(ctx, func(tx *sql.Tx) error {
 		n, err := s.d.Users.Count(ctx, tx)
@@ -193,10 +194,6 @@ func (s *UserService) EnsureSetupToken(ctx context.Context) (token string, creat
 		}
 		if n > 0 {
 			return nil
-		}
-		_, ok, err := s.d.ServerState.Get(ctx, tx, setupTokenKey)
-		if err != nil || ok {
-			return err
 		}
 		tok := randomB64(24)
 		if err := s.d.ServerState.Set(ctx, tx, setupTokenKey, hashToken(tok)); err != nil {

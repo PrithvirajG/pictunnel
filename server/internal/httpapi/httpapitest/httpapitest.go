@@ -1,8 +1,6 @@
-// Package httpapitest builds an in-process HTTP server over the real
-// services (temp dirs, a fake clock, a fixed secret) and validates every
-// response against the embedded OpenAPI contract.
-//
-// Task 15 switches the wiring to app.New; the helpers stay the same.
+// Package httpapitest builds an in-process HTTP server over the production
+// wiring (app.New on temp dirs, a fake clock, a fixed secret and server id)
+// and validates every response against the embedded OpenAPI contract.
 package httpapitest
 
 import (
@@ -21,31 +19,26 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
-	"github.com/PrithvirajG/pictunnel/server/internal/apperr"
+	"github.com/PrithvirajG/pictunnel/server/internal/app"
 	"github.com/PrithvirajG/pictunnel/server/internal/clock/clocktest"
 	"github.com/PrithvirajG/pictunnel/server/internal/config"
 	"github.com/PrithvirajG/pictunnel/server/internal/httpapi"
 	"github.com/PrithvirajG/pictunnel/server/internal/httpapi/gen"
-	"github.com/PrithvirajG/pictunnel/server/internal/httpapi/tus"
-	"github.com/PrithvirajG/pictunnel/server/internal/jobs"
-	"github.com/PrithvirajG/pictunnel/server/internal/media/probe"
-	"github.com/PrithvirajG/pictunnel/server/internal/repository"
-	"github.com/PrithvirajG/pictunnel/server/internal/repository/repotest"
 	"github.com/PrithvirajG/pictunnel/server/internal/service"
-	"github.com/PrithvirajG/pictunnel/server/internal/storage"
 	"github.com/PrithvirajG/pictunnel/server/internal/store"
 )
 
 // T0 is the fake clock's start time.
 var T0 = time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 
-// ServerID is the server id reported by the default server info.
+// ServerID is the server id the test server boots with.
 const ServerID = "01928f3e-7b2a-7c4d-9e1f-2a3b4c5d6e7f"
 
 // Secret is the fixed 32-byte server secret.
 var Secret = []byte("0123456789abcdef0123456789abcdef")
+
+// Version is the server version reported by server info.
+const Version = "0.1.0"
 
 type options struct {
 	local  bool
@@ -72,7 +65,7 @@ func WithInfo(f func() gen.ServerInfo) Option { return func(o *options) { o.info
 // WithReady replaces the readiness check.
 func WithReady(f func(context.Context) error) Option { return func(o *options) { o.ready = f } }
 
-// WithConfig edits the configuration before the handler is built.
+// WithConfig edits the configuration before the app boots.
 func WithConfig(f func(*config.Config)) Option { return func(o *options) { o.cfg = append(o.cfg, f) } }
 
 // WithLimits replaces the rate limits.
@@ -87,6 +80,8 @@ type App struct {
 	Cfg     config.Config
 	DataDir string
 	LibDir  string
+	// Core is the booted production app.
+	Core *app.App
 
 	Users   *service.UserService
 	Auth    *service.AuthService
@@ -101,7 +96,31 @@ type App struct {
 	client *http.Client
 }
 
-// New wires the services on temp dirs and starts an httptest server.
+// Seed prepares dataDir so app.New boots with ServerID and Secret.
+func Seed(t testing.TB, dataDir string) {
+	t.Helper()
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "secret.key"), Secret, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(dataDir, "pictunnel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.W.ExecContext(ctx, `INSERT INTO server_state(key, value) VALUES ('server_id', ?)`, ServerID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// New boots app.New on temp dirs and starts an httptest server over its
+// handler (rebuilt from app.Deps with the options applied).
 func New(t *testing.T, opts ...Option) *App {
 	t.Helper()
 	var o options
@@ -109,128 +128,55 @@ func New(t *testing.T, opts ...Option) *App {
 		f(&o)
 	}
 	root := t.TempDir()
-	a := &App{Store: repotest.NewStore(t), Clock: clocktest.NewFake(T0),
-		DataDir: filepath.Join(root, "data"), LibDir: filepath.Join(root, "library")}
+	a := &App{Clock: clocktest.NewFake(T0), DataDir: filepath.Join(root, "data"), LibDir: filepath.Join(root, "library")}
 	for _, d := range []string{a.DataDir, a.LibDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	Seed(t, a.DataDir)
 	cfg := config.Default()
 	cfg.DataDir, cfg.LibraryDir = a.DataDir, a.LibDir
 	cfg.Server.Name = "Test server"
+	cfg.Discovery.MDNS = false
 	cfg.Log.Format = "text"
 	for _, f := range o.cfg {
 		f(&cfg)
 	}
 	a.Cfg = cfg
 
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	st, clk, fs := a.Store, a.Clock, storage.OS()
-	var err error
-	a.Auth, err = service.NewAuthService(service.AuthServiceDeps{
-		Store: st, Users: repository.UsersRepository{}, Devices: repository.DevicesRepository{},
-		AccessTokens: repository.AccessTokensRepository{}, RefreshTokens: repository.RefreshTokensRepository{},
-		WebSessions: repository.WebSessionsRepository{}, Audit: repository.AuditLogRepository{},
-		Clock: clk, Secret: Secret,
+	core, err := app.New(context.Background(), app.Options{
+		Config: cfg, Clock: a.Clock, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		FreeSpace: func(string) (uint64, error) { return 1 << 50, nil }, DisableScheduler: true, Version: Version,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.Users = service.NewUserService(service.UserServiceDeps{
-		Store: st, Users: repository.UsersRepository{}, ServerState: repository.ServerStateRepository{},
-		Devices: repository.DevicesRepository{}, Audit: repository.AuditLogRepository{}, Auth: a.Auth, Clock: clk,
-	})
-	a.Devices = service.NewDeviceService(service.DeviceServiceDeps{
-		Store: st, Devices: repository.DevicesRepository{}, Auth: a.Auth, Clock: clk,
-	})
-	a.Pairing, err = service.NewPairingService(service.PairingServiceDeps{
-		Store: st, PairingCodes: repository.PairingCodesRepository{}, Devices: repository.DevicesRepository{},
-		Users: repository.UsersRepository{}, Audit: repository.AuditLogRepository{}, Auth: a.Auth, Clock: clk,
-		ServerID: ServerID, Fingerprint: "xKecCxNIWtM6GstVge3d62YGSu9rChlvCqOALKreFGc",
-		Endpoints: func() []string { return []string{"https://192.168.1.20:8443"} }, Secret: Secret,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	runner := jobs.New(st, repository.JobsRepository{}, clk, log)
-	a.Check = service.NewCheckService(service.CheckServiceDeps{
-		Store: st, Assets: repository.AssetsRepository{}, LiveVideos: repository.LiveVideosRepository{},
-		UploadSessions: repository.UploadSessionsRepository{}, Tombstones: repository.TombstonesRepository{},
-		AssetSources: repository.AssetSourcesRepository{}, FS: fs, Clock: clk, LibraryDir: a.LibDir,
-	})
-	a.Feed = service.NewFeedService(service.FeedServiceDeps{
-		Store: st, Assets: repository.AssetsRepository{}, LiveVideos: repository.LiveVideosRepository{},
-		ChangeLog: repository.ChangeLogRepository{}, ServerState: repository.ServerStateRepository{},
-	})
-	a.Assets = service.NewAssetService(service.AssetServiceDeps{
-		Store: st, Assets: repository.AssetsRepository{}, LiveVideos: repository.LiveVideosRepository{},
-		FS: fs, LibraryDir: a.LibDir, DataDir: a.DataDir,
-	})
-	a.Trash = service.NewTrashService(service.TrashServiceDeps{
-		Store: st, Assets: repository.AssetsRepository{}, LiveVideos: repository.LiveVideosRepository{},
-		Tombstones: repository.TombstonesRepository{}, ChangeLog: repository.ChangeLogRepository{},
-		LibraryPaths: repository.LibraryPathsRepository{}, Jobs: runner, FS: fs, Clock: clk,
-		LibraryDir: a.LibDir, DataDir: a.DataDir, RetentionDays: cfg.Trash.RetentionDays, Log: log,
-	})
-	lib := service.NewLibraryService(service.LibraryServiceDeps{
-		LibraryPaths: repository.LibraryPathsRepository{}, FS: fs, Clock: clk, LibraryDir: a.LibDir,
-	})
-	fin := service.NewFinalizeService(service.FinalizeServiceDeps{
-		Store: st, Users: repository.UsersRepository{}, Assets: repository.AssetsRepository{},
-		LiveVideos: repository.LiveVideosRepository{}, LibraryPaths: repository.LibraryPathsRepository{},
-		AssetSources: repository.AssetSourcesRepository{}, UploadSessions: repository.UploadSessionsRepository{},
-		Tombstones: repository.TombstonesRepository{}, ChangeLog: repository.ChangeLogRepository{},
-		Jobs: runner, Library: lib, FS: fs, Clock: clk, Probe: probe.FastDate,
-		DataDir: a.DataDir, LibraryDir: a.LibDir, Log: log,
-	})
-	a.Upload = service.NewUploadService(service.UploadServiceDeps{
-		Store: st, Sessions: repository.UploadSessionsRepository{}, Assets: repository.AssetsRepository{},
-		LiveVideos: repository.LiveVideosRepository{}, Tombstones: repository.TombstonesRepository{},
-		Users: repository.UsersRepository{}, AssetSources: repository.AssetSourcesRepository{},
-		Finalize: fin, FS: fs, FreeSpace: func(string) (uint64, error) { return 1 << 50, nil }, Clock: clk,
-		Cfg:     service.UploadConfig{MaxFileBytes: cfg.Upload.MaxFileBytes, ReserveBytes: cfg.Storage.ReserveBytes},
-		DataDir: a.DataDir, LibraryDir: a.LibDir, Log: log,
-	})
+	t.Cleanup(func() { _ = core.Close() })
+	a.Core, a.Store = core, core.Store()
+	a.Users, a.Auth, a.Devices, a.Pairing = core.Users(), core.Auth(), core.Devices(), core.Pairing()
+	a.Check, a.Feed, a.Assets, a.Trash, a.Upload = core.Check(), core.Feed(), core.Assets(), core.Trash(), core.Upload()
 
-	info := o.info
-	if info == nil {
-		info = func() gen.ServerInfo {
-			return gen.ServerInfo{
-				ServerId: uuid.MustParse(ServerID), Name: cfg.Server.Name, Version: "0.1.0", ApiVersion: "1.0",
-				MinClientVersion: gen.ClientVersions{
-					Android: cfg.Clients.MinVersion["android"], Ios: cfg.Clients.MinVersion["ios"], Web: cfg.Clients.MinVersion["web"],
-				},
-				Capabilities: []string{"tus"},
-				Upload: gen.UploadLimits{TusVersion: "1.0.0", MaxFileBytes: cfg.Upload.MaxFileBytes,
-					RecommendedChunkBytes: cfg.Upload.RecommendedChunkBytes},
-			}
-		}
+	deps := core.Deps()
+	if o.tus != nil {
+		deps.Tus = o.tus
 	}
-	tusHandler := o.tus
-	if tusHandler == nil {
-		tusHandler = tus.New(a.Upload, TusPrincipal, cfg, log, httpapi.WriteProblem)
+	if o.info != nil {
+		deps.Info = o.info
 	}
-	a.Handler = httpapi.NewHandler(httpapi.Deps{
-		Users: a.Users, Auth: a.Auth, Devices: a.Devices, Pairing: a.Pairing, Check: a.Check, Feed: a.Feed,
-		Assets: a.Assets, Trash: a.Trash, Tus: tusHandler, Info: info, Ready: o.ready, Cfg: cfg, Clock: clk,
-		Log: log, Limits: o.limits,
-	}, o.local)
+	if o.ready != nil {
+		deps.Ready = o.ready
+	}
+	deps.Limits = o.limits
+	a.Handler = httpapi.NewHandler(deps, o.local)
 	a.Server = httptest.NewServer(a.Handler)
 	t.Cleanup(a.Server.Close)
 	a.client = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return a
 }
 
-// TusPrincipal is the tus handler's auth func: the principal the auth
-// middleware stored, else unauthorized.
-func TusPrincipal(r *http.Request) (service.Principal, error) {
-	p, ok := httpapi.PrincipalFrom(r.Context())
-	if !ok {
-		return service.Principal{}, apperr.Unauthorized()
-	}
-	return p, nil
-}
+// TusPrincipal is httpapi.TusPrincipal (kept for existing callers).
+func TusPrincipal(r *http.Request) (service.Principal, error) { return httpapi.TusPrincipal(r) }
 
 // Req builds a request to path. body may be nil, a string (sent as is) or
 // any value (sent as JSON).

@@ -167,3 +167,29 @@ func TestLocalIPsNonLoopback(t *testing.T) {
 		}
 	}
 }
+
+func TestCARegeneratedFlag(t *testing.T) {
+	dir := t.TempDir()
+	if m := ensure(t, dir, ip, t0); m.CARegenerated {
+		t.Fatal("first boot reported a regenerated CA")
+	}
+	if m := ensure(t, dir, ip, t0.Add(time.Hour)); m.CARegenerated {
+		t.Fatal("valid CA reported as regenerated")
+	}
+	pin := ensure(t, dir, ip, t0).SPKIFingerprint
+	if err := os.WriteFile(filepath.Join(dir, "ca.crt"), []byte("garbage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := ensure(t, dir, ip, t0.Add(2*time.Hour))
+	if !m.CARegenerated {
+		t.Fatal("corrupt CA replaced without CARegenerated")
+	}
+	if m.SPKIFingerprint != pin {
+		t.Fatal("pin changed when the CA was regenerated")
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(m.CAPEM)
+	if _, err := m.Leaf.Verify(x509.VerifyOptions{Roots: pool, CurrentTime: t0.Add(3 * time.Hour)}); err != nil {
+		t.Fatalf("leaf not re-signed by the new CA: %v", err)
+	}
+}

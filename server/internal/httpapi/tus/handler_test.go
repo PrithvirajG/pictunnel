@@ -190,7 +190,7 @@ func TestCreateBodyless(t *testing.T) {
 		t.Errorf("Location = %q", loc)
 	}
 	wantHeader(t, resp, "Upload-Expires", expiresAt(24*time.Hour))
-	wantNoHeader(t, resp, "Upload-Offset")
+	wantHeader(t, resp, "Upload-Offset", "0") // always reported (P§7.3 row 4 needs it for a joined session at 0)
 	wantNoHeader(t, resp, "PicTunnel-Asset-Id")
 	wantNoHeader(t, resp, "PicTunnel-Asset-Created")
 
@@ -278,7 +278,7 @@ func TestCreateInvalid(t *testing.T) {
 	// Nothing was created by the rejected requests.
 	resp, body := e.do(t, http.MethodPost, uploads, nil, map[string]string{"Upload-Length": "64", "Upload-Metadata": metadata(sha)})
 	wantStatus(t, resp, body, http.StatusCreated)
-	wantNoHeader(t, resp, "Upload-Offset")
+	wantHeader(t, resp, "Upload-Offset", "0") // always reported (P§7.3 row 4 needs it for a joined session at 0)
 }
 
 func TestCreateFileTooLarge(t *testing.T) {

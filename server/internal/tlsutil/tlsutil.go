@@ -37,6 +37,10 @@ type Material struct {
 	CAPEM []byte
 	// SPKIFingerprint is the unpadded base64url SHA-256 of the leaf's SPKI.
 	SPKIFingerprint string
+	// CARegenerated is true when an existing CA (cert or key file present)
+	// was unusable or expiring and has been replaced. Clients that installed
+	// the old CA must re-trust; the leaf pin is unchanged.
+	CARegenerated bool
 }
 
 // SPKIFingerprint returns the unpadded base64url SHA-256 of cert's SubjectPublicKeyInfo.
@@ -97,7 +101,7 @@ func EnsureSelfSigned(dir, serverID string, hosts []string, ips []net.IP, now ti
 	}
 	dns, ipList := wantedSANs(hosts, ips)
 
-	caCert, caKey, caPEM, err := ensureCA(dir, short, now)
+	caCert, caKey, caPEM, caNew, err := ensureCA(dir, short, now)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +126,7 @@ func EnsureSelfSigned(dir, serverID string, hosts []string, ips []net.IP, now ti
 	}
 	return &Material{
 		Cert: tls.Certificate{Certificate: [][]byte{leaf.Raw}, PrivateKey: leafKey, Leaf: leaf},
-		Leaf: leaf, CAPEM: caPEM, SPKIFingerprint: SPKIFingerprint(leaf),
+		Leaf: leaf, CAPEM: caPEM, SPKIFingerprint: SPKIFingerprint(leaf), CARegenerated: caNew,
 	}, nil
 }
 
@@ -200,25 +204,28 @@ func signLeaf(short string, dns []string, ips []net.IP, key *ecdsa.PrivateKey, c
 	return x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
 }
 
-func ensureCA(dir, short string, now time.Time) (*x509.Certificate, *ecdsa.PrivateKey, []byte, error) {
+// ensureCA loads the CA or creates a new one. replaced reports that a CA
+// file existed but was replaced.
+func ensureCA(dir, short string, now time.Time) (cert *x509.Certificate, key *ecdsa.PrivateKey, pemOut []byte, replaced bool, err error) {
 	crtPath, keyPath := filepath.Join(dir, "ca.crt"), filepath.Join(dir, "ca.key")
-	cert, key := loadCert(crtPath), loadKey(keyPath)
+	cert, key = loadCert(crtPath), loadKey(keyPath)
 	if cert != nil && key != nil && cert.NotAfter.After(now.Add(renewWindow)) {
 		if pub, ok := cert.PublicKey.(*ecdsa.PublicKey); ok && pub.Equal(&key.PublicKey) {
 			b, err := os.ReadFile(crtPath)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, false, err
 			}
-			return cert, key, b, nil
+			return cert, key, b, false, nil
 		}
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	replaced = fileExists(crtPath) || fileExists(keyPath)
+	key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
 	serial, err := newSerial()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
@@ -233,21 +240,26 @@ func ensureCA(dir, short string, now time.Time) (*x509.Certificate, *ecdsa.Priva
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
 	cert, err = x509.ParseCertificate(der)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	// Key first: a crash between the writes leaves a key without a cert, which is regenerated.
 	if err := writeKey(keyPath, key); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
 	if err := writeAtomic(crtPath, pemBytes, 0o644); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
-	return cert, key, pemBytes, nil
+	return cert, key, pemBytes, replaced, nil
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 func ensureLeafKey(dir string) (*ecdsa.PrivateKey, error) {

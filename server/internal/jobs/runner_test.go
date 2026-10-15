@@ -279,3 +279,19 @@ func TestShutdownInterruptedJobIsReleasedWithoutPenalty(t *testing.T) {
 		t.Fatalf("released job must be runnable now: %v", j.RunAfter)
 	}
 }
+
+func TestRunNowDeclaredPeriodicWithoutScheduler(t *testing.T) {
+	e := newEnv(t)
+	var calls atomic.Int32
+	e.r.Register("p", func(context.Context, []byte) error { calls.Add(1); return nil }, 0)
+	e.r.DeclarePeriodic([]jobs.Periodic{{Kind: "p", Every: time.Hour}})
+	if err := e.r.RunNow(context.Background(), "p"); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls %d, want 1 (declared periodic kind runs directly)", calls.Load())
+	}
+	if c := e.counts(t); len(c) != 0 {
+		t.Fatalf("DeclarePeriodic enqueued jobs: %v", c)
+	}
+}

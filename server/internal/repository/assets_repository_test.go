@@ -3,6 +3,7 @@ package repository_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -197,5 +198,41 @@ func TestAssetsSetKindAndStackIDForKey(t *testing.T) {
 	}
 	if err := r.SetKind(ctx, s.W, "nope", "video"); !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("missing: %v", err)
+	}
+}
+
+func TestAssetsListMediaPending(t *testing.T) {
+	ctx := context.Background()
+	s := repotest.NewStore(t)
+	repotest.SeedUser(t, s, "o1")
+	r := repository.AssetsRepository{}
+	yes, no := true, false
+	mk := func(id, kind string, thumbs bool, playable *bool) {
+		a := newAsset(id, "o1", "sha-"+id)
+		a.Kind, a.ThumbnailsReady, a.Playable = kind, thumbs, playable
+		if err := r.Insert(ctx, s.W, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("a1", "photo", true, nil)      // done
+	mk("a2", "photo", false, nil)     // needs thumbnails
+	mk("a3", "video", true, nil)      // playability unknown
+	mk("a4", "video", true, &yes)     // done
+	mk("a5", "video", true, &no)      // may need a transcode
+	mk("a6", "live_photo", true, nil) // done (still)
+	got, err := r.ListMediaPending(ctx, s.R)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, m := range got {
+		ids = append(ids, m.ID)
+	}
+	if want := "a2,a3,a5"; strings.Join(ids, ",") != want {
+		t.Fatalf("ListMediaPending = %v, want %s", ids, want)
+	}
+	if got[0].ThumbnailsReady || !got[1].ThumbnailsReady || got[1].Playable != nil || got[2].Playable == nil || *got[2].Playable ||
+		got[1].Kind != "video" {
+		t.Fatalf("rows: %+v", got)
 	}
 }

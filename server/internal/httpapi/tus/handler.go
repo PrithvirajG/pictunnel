@@ -169,9 +169,9 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request, p service.Princ
 	}
 	hd := w.Header()
 	hd.Set("Location", BasePath+"/"+v.ID)
-	if v.Offset > 0 || v.Done {
-		hd.Set("Upload-Offset", strconv.FormatInt(v.Offset, 10))
-	}
+	// Always report the offset: a create that joins an active session must
+	// return its current offset even when that is 0 (P§7.3 row 4).
+	hd.Set("Upload-Offset", strconv.FormatInt(v.Offset, 10))
 	setProgress(hd, v, true)
 	w.WriteHeader(http.StatusCreated)
 }
