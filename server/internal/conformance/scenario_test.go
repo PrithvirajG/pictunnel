@@ -321,6 +321,9 @@ func (r *runner) must(label string, err error) {
 func (r *runner) httpStep(label string, s conformance.Step) {
 	t := r.t
 	t.Helper()
+	if s.Request == nil || s.Expect == nil {
+		t.Fatalf("%s: an HTTP step needs request and expect", label)
+	}
 	st, ok := r.actors[s.Actor]
 	if !ok {
 		t.Fatalf("%s: unknown actor %q", label, s.Actor)
@@ -567,15 +570,7 @@ func (r *runner) checkInvariants() {
 	cfg := r.a.Config()
 	db := r.a.Store().R
 
-	// No *.ptpart anywhere.
-	for _, root := range []string{cfg.LibraryDir, cfg.DataDir} {
-		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-			if err == nil && !d.IsDir() && strings.HasSuffix(p, ".ptpart") {
-				t.Errorf("invariant: stray %s", p)
-			}
-			return nil
-		})
-	}
+	r.checkNoTempFiles("")
 	// A library file of the recorded size for each asset and live video.
 	for _, q := range []string{
 		`SELECT id, original_path, size_bytes FROM assets`,
@@ -596,6 +591,9 @@ func (r *runner) checkInvariants() {
 				t.Errorf("invariant: %s %s: file %v size %v, want %d", id, rel, err, sizeOf(fi), size)
 			}
 		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
 		_ = rows.Close()
 	}
 	r.checkNoFinalizing()
@@ -608,8 +606,13 @@ func (r *runner) checkInvariants() {
 	}
 	for rows.Next() {
 		var id string
-		_ = rows.Scan(&id)
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
 		live[id+".part"] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
 	}
 	_ = rows.Close()
 	for _, f := range r.stagingFiles() {
@@ -625,7 +628,38 @@ func (r *runner) checkInvariants() {
 	if left := r.stagingFiles(); len(left) != 0 {
 		t.Errorf("invariant: uploads/ not empty after expiry: %v", left)
 	}
+	r.checkNoTempFiles(" after expiry")
+	r.checkNoFinalizing()
 	r.checkReservations()
+}
+
+// checkNoTempFiles: no *.ptpart anywhere under the library or data dir,
+// and the library temp dir (.pictunnel-tmp) holds nothing.
+func (r *runner) checkNoTempFiles(when string) {
+	t := r.t
+	t.Helper()
+	cfg := r.a.Config()
+	for _, root := range []string{cfg.LibraryDir, cfg.DataDir} {
+		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() && strings.HasSuffix(p, ".ptpart") {
+				t.Errorf("invariant%s: stray %s", when, p)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", root, err)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(cfg.LibraryDir, ".pictunnel-tmp"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		t.Errorf("invariant%s: library temp dir holds %s", when, e.Name())
+	}
 }
 
 func sizeOf(fi os.FileInfo) any {
@@ -683,6 +717,9 @@ func (r *runner) checkReservations() {
 			r.t.Errorf("invariant: reservation %q has no owner (asset %v, upload %v)", path, deref(assetID), deref(uploadID))
 		}
 	}
+	if err := rows.Err(); err != nil {
+		r.t.Fatal(err)
+	}
 }
 
 func deref(s *string) string {
@@ -729,6 +766,30 @@ func TestMatchers(t *testing.T) {
 		{`true`, `false`, false},
 		{`null`, `null`, true},
 		{`1048576`, `1048576`, true},
+		{`1048576`, `"1048576"`, false},
+		// $len: exact count, arrays only.
+		{`{"$len":1}`, `[1,2]`, false},
+		{`{"$len":0}`, `{}`, false},
+		{`{"$len":0}`, `null`, false},
+		// Shape mismatches.
+		{`{"a":1}`, `[1]`, false},
+		{`[1]`, `{"a":1}`, false},
+		{`{"a":{"b":1}}`, `{"a":{"c":1}}`, false},
+		{`{"a":{"b":1}}`, `{"a":{"b":1,"c":2}}`, true},
+		{`[{"k":{"x":1}}]`, `[{"k":{"y":1}}]`, false},
+		// $datetime is RFC 3339: any offset is fine, a missing offset is not.
+		{`"$datetime"`, `"2026-10-03T17:30:00+05:30"`, true},
+		{`"$datetime"`, `"2026-10-03T12:00:00-07:00"`, true},
+		{`"$datetime"`, `"2026-10-03T12:00:00"`, false},
+		{`"$datetime"`, `"2026-10-03 12:00:00Z"`, false},
+		{`"$datetime"`, `1696334400`, false},
+		// ${name} against a JSON number: saved values are decimal strings,
+		// so the number's decimal form must equal the saved value.
+		{`"${n}"`, `5`, true},
+		{`"${n}"`, `6`, false},
+		{`"${n}"`, `"5"`, true},
+		{`"${missing}"`, `"x"`, false},
+		{`"$uuid"`, `7`, false},
 	} {
 		err := conformance.MatchJSON(dec(c.want), dec(c.got), v)
 		if (err == nil) != c.ok {
@@ -747,5 +808,46 @@ func TestMatchers(t *testing.T) {
 	md, err := conformance.TusMetadata(&conformance.OrderedStrings{Keys: []string{"z", "a"}, Values: map[string]string{"z": "1", "a": "${n}"}}, v)
 	if err != nil || md != "z MQ==,a NQ==" {
 		t.Errorf("TusMetadata = %q %v", md, err)
+	}
+}
+
+func TestLoadScenarioCasesRejectsMalformedSteps(t *testing.T) {
+	const okStep = `{"actor":"a","request":{"method":"GET","path":"/x"},"expect":{"status":200}}`
+	for name, steps := range map[string]string{
+		"misspelled expect":  `[{"actor":"a","request":{"method":"GET","path":"/x"},"expectt":{"status":200}}]`,
+		"no expect":          `[{"actor":"a","request":{"method":"GET","path":"/x"}}]`,
+		"misspelled request": `[{"actor":"a","request":{"method":"GET","pth":"/x"},"expect":{"status":200}}]`,
+		"misspelled header":  `[{"actor":"a","request":{"method":"GET","path":"/x"},"expect":{"status":200,"header":{"A":"b"}}}]`,
+		"bad generate key":   `[{"actor":"a","request":{"method":"PATCH","path":"/x","body":{"generate":{"pattern":"counter","length":1,"sed":1}}},"expect":{"status":204}}]`,
+		"unknown control":    `[{"control":{"advance_clock":1}}]`,
+		"control with actor": `[{"actor":"a","control":{"run_job":"purge_trash"}}]`,
+		"unknown actor":      `[{"actor":"b","request":{"method":"GET","path":"/x"},"expect":{"status":200}}]`,
+		"status and none":    `[{"actor":"a","request":{"method":"GET","path":"/x"},"expect":{}}]`,
+		"drop with status":   `[{"actor":"a","request":{"method":"GET","path":"/x"},"transport":{"drop_after_bytes":1},"expect":{"status":200}}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			sd := filepath.Join(dir, "vectors", "server-scenarios")
+			if err := os.MkdirAll(sd, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			doc := `{"schema_version":1,"kind":"server-scenario","description":"d","cases":[{"name":"c","actors":{"a":{"user":"u"}},"steps":` + steps + `}]}`
+			if err := os.WriteFile(filepath.Join(sd, "x.json"), []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conformance.LoadScenarioCases(dir); err == nil {
+				t.Fatal("malformed vector accepted")
+			}
+			// The same file with a well-formed step loads, and raw
+			// payloads (json, expect.body) may hold any keys.
+			doc = `{"schema_version":1,"kind":"server-scenario","description":"d","cases":[{"name":"c","actors":{"a":{"user":"u"}},"steps":[` + okStep +
+				`,{"actor":"a","request":{"method":"POST","path":"/x","json":{"anything":1}},"expect":{"status":200,"body":{"whatever":true}}}]}]}`
+			if err := os.WriteFile(filepath.Join(sd, "x.json"), []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conformance.LoadScenarioCases(dir); err != nil {
+				t.Fatalf("well-formed vector rejected: %v", err)
+			}
+		})
 	}
 }

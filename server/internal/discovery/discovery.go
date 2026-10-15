@@ -27,8 +27,9 @@ import (
 const ServiceType = "_pictunnel._tcp"
 
 // recheckInterval is how often interface changes are checked; a change
-// re-announces the service.
-const recheckInterval = 60 * time.Second
+// re-announces the service. A responder that stopped with an error is
+// rebound on the next check. Tests shorten it.
+var recheckInterval = 60 * time.Second
 
 // Responder advertises the service until stopped.
 type Responder interface {
@@ -169,7 +170,7 @@ func (r *responder) loop(ctx context.Context, rsp dnssd.Responder) {
 				}
 				return
 			case <-tick.C:
-				if s := interfaceSignature(); s != sig || rsp == nil {
+				if s := interfaceSignature(); s != sig || rsp == nil || closed(runDone) {
 					sig, changed = s, true
 				}
 			}
@@ -185,6 +186,20 @@ func (r *responder) loop(ctx context.Context, rsp dnssd.Responder) {
 		} else {
 			r.log.Info("mDNS: interfaces changed; re-announcing")
 		}
+	}
+}
+
+// closed reports whether ch (non-nil) is closed: the responder goroutine
+// has exited, normally because Respond failed.
+func closed(ch chan struct{}) bool {
+	if ch == nil {
+		return false
+	}
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
 	}
 }
 

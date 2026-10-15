@@ -86,11 +86,17 @@ func serve(ctx context.Context, args, env []string, stdout, stderr io.Writer) in
 			if cfg.TLS.Mode == "off" {
 				scheme = "http"
 			}
-			_, _ = fmt.Fprintf(stdout, "PicTunnel %s listening on %s://%s (local http://%s)\n", version, scheme, httpsAddr, localAddr)
+			local := "local listener off"
+			if localAddr != "" {
+				local = "local http://" + localAddr
+			}
+			_, _ = fmt.Fprintf(stdout, "PicTunnel %s listening on %s://%s (%s)\n", version, scheme, httpsAddr, local)
 			if tok := a.SetupToken(); tok != "" {
-				_, _ = fmt.Fprintf(stdout, "First-run setup: open http://%s on this machine to create the admin account.\n"+
-					"From another machine, send the header PicTunnel-Setup-Token: %s\n"+
-					"(the token changes on every start until setup is done)\n", localAddr, tok)
+				if localAddr != "" {
+					_, _ = fmt.Fprintf(stdout, "First-run setup: open http://%s on this machine to create the admin account.\n", localAddr)
+				}
+				_, _ = fmt.Fprintf(stdout, "From another machine, send the header PicTunnel-Setup-Token: %s\n"+
+					"(the token changes on every start until setup is done)\n", tok)
 			}
 		},
 	})
@@ -118,14 +124,7 @@ func resetPassword(ctx context.Context, user string, args, env []string, stdout,
 		_, _ = fmt.Fprintf(stderr, "pictunnel: %v\n", err)
 		return 2
 	}
-	cfg.Discovery.MDNS = false
-	a, err := app.New(ctx, app.Options{Config: cfg, Log: newLogger(cfg, io.Discard), Version: version, DisableScheduler: true})
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "pictunnel: %v\n", err)
-		return 1
-	}
-	defer func() { _ = a.Close() }()
-	pw, err := a.Users().ResetPassword(ctx, user)
+	pw, err := app.ResetPassword(ctx, cfg, user)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "pictunnel: reset password for %q: %v\n", user, err)
 		return 1

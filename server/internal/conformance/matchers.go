@@ -126,6 +126,13 @@ func matchAt(path string, want, got any, v Vars) error {
 			if w == "$any" {
 				return nil
 			}
+			// Saved values are decimal strings (P§10.4), so ${name}
+			// matches a JSON number with the same decimal form.
+			if m := wholeVar.FindStringSubmatch(w); m != nil {
+				if saved, ok := v[m[1]]; ok && saved == strconv.FormatFloat(g, 'f', -1, 64) {
+					return nil
+				}
+			}
 			return at(fmt.Errorf("want %s, got number %v", w, g))
 		default:
 			if w == "$any" && got != nil {

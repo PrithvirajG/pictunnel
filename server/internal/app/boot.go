@@ -52,13 +52,19 @@ func openStore(ctx context.Context, dataDir string, now time.Time) (*store.Store
 	path := filepath.Join(dataDir, dbFileName)
 	_, statErr := os.Stat(path)
 	existed := statErr == nil
+	damaged := func(err error) error {
+		return fmt.Errorf("%w\nThe database %s is damaged. Stop here and restore it: copy the newest file from %s over it (keep the damaged one aside), then start again", err, path, filepath.Join(dataDir, "backups"))
+	}
 	st, err := store.Open(ctx, path)
 	if err != nil {
+		if existed {
+			return nil, damaged(err)
+		}
 		return nil, err
 	}
 	if err := st.QuickCheck(ctx); err != nil {
 		_ = st.Close()
-		return nil, fmt.Errorf("%w\nThe database %s is damaged. Stop here and restore it: copy the newest file from %s over it (keep the damaged one aside), then start again", err, path, filepath.Join(dataDir, "backups"))
+		return nil, damaged(err)
 	}
 	pending, err := st.PendingMigrations(ctx)
 	if err != nil {

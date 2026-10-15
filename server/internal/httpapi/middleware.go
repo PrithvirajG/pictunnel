@@ -82,15 +82,21 @@ func (s *server) requestID(next http.Handler) http.Handler {
 // loopbackHosts are the Host names accepted on the loopback listener.
 var loopbackHosts = map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}
 
-// hostGuard rejects, on the loopback listener only, requests whose Host is
-// not a loopback name (403 forbidden). This blocks DNS rebinding: a page on
-// evil.example resolving to 127.0.0.1 must not reach the unauthenticated
-// setup or the non-Secure cookie.
+// hostGuard rejects, on the loopback listener only, requests from a peer
+// that is not a loopback address or whose Host is not a loopback name (403
+// forbidden). The peer check keeps a misbound local listener from exposing
+// the token-less setup and non-Secure cookies to the LAN; the Host check
+// blocks DNS rebinding: a page on evil.example resolving to 127.0.0.1 must
+// not reach the unauthenticated setup or the non-Secure cookie.
 func (s *server) hostGuard(next http.Handler) http.Handler {
 	if !s.local {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !loopbackPeer(r.RemoteAddr) {
+			WriteProblem(w, r, apperr.Forbidden("The local listener only serves this machine."))
+			return
+		}
 		host := r.Host
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h
@@ -102,6 +108,16 @@ func (s *server) hostGuard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// loopbackPeer reports whether addr (host:port) is a loopback IP.
+func loopbackPeer(addr string) bool {
+	h, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		h = addr
+	}
+	ip := net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(h, "["), "]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 // stackPanic carries a recovered panic value with the stack where it was

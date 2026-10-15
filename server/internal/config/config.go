@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -320,6 +321,10 @@ func (c Config) Validate() error {
 	default:
 		bad("tls.mode %q must be self-signed, files or off", c.TLS.Mode)
 	}
+	if c.Server.LocalAddr != "" && !loopbackAddr(c.Server.LocalAddr) {
+		bad("server.local_addr %q must be a loopback address (127.0.0.0/8, [::1] or localhost) or empty to disable it: "+
+			"it serves first-run setup without a token", c.Server.LocalAddr)
+	}
 	if c.Upload.MaxFileBytes <= 0 {
 		bad("upload.max_file_bytes must be > 0")
 	}
@@ -357,4 +362,17 @@ func (c Config) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// loopbackAddr reports whether addr is host:port with a loopback host.
+func loopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

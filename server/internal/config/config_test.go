@@ -72,3 +72,20 @@ func TestConfigValidation(t *testing.T) {
 		t.Fatalf("valid config rejected: %v", err)
 	}
 }
+
+func TestLocalAddrMustBeLoopback(t *testing.T) {
+	dir := t.TempDir()
+	for _, bad := range []string{"0.0.0.0:8080", ":8080", "192.168.1.20:8080", "[::]:8080", "example.com:8080", "8080", "[fe80::1]:8080"} {
+		if _, err := config.Load([]string{"--data-dir=" + dir, "--server.local-addr=" + bad}, nil); err == nil {
+			t.Errorf("local_addr %q accepted", bad)
+		}
+	}
+	for _, good := range []string{"127.0.0.1:8080", "127.0.0.2:9000", "[::1]:8080", "localhost:8080", "LOCALHOST:1", ""} {
+		cfg, err := config.Load([]string{"--data-dir=" + dir, "--server.local-addr=" + good}, nil)
+		if err != nil {
+			t.Errorf("local_addr %q rejected: %v", good, err)
+		} else if cfg.Server.LocalAddr != good {
+			t.Errorf("local_addr %q loaded as %q", good, cfg.Server.LocalAddr)
+		}
+	}
+}

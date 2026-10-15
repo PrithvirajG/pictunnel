@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -137,8 +138,18 @@ func LoadScenarioCases(protocolDir string) ([]ScenarioCase, error) {
 		if err != nil {
 			return nil, err
 		}
-		var vf vectorFile[ScenarioCase]
-		if err := json.Unmarshal(raw, &vf); err != nil {
+		// Unknown keys in the step structures are errors (a misspelled
+		// "expect" must not silently skip checks); raw payloads (request
+		// json, expect body) are not inspected.
+		var vf struct {
+			SchemaVersion int            `json:"schema_version"`
+			Kind          string         `json:"kind"`
+			Description   string         `json:"description"`
+			Cases         []ScenarioCase `json:"cases"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&vf); err != nil {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
 		if vf.Kind != "server-scenario" {
@@ -146,10 +157,43 @@ func LoadScenarioCases(protocolDir string) ([]ScenarioCase, error) {
 		}
 		for _, c := range vf.Cases {
 			c.File = filepath.Base(f)
+			if err := c.validate(); err != nil {
+				return nil, fmt.Errorf("%s: case %s: %w", f, c.Name, err)
+			}
 			all = append(all, c)
 		}
 	}
 	return all, nil
+}
+
+// validate checks the step shapes the runner relies on: an HTTP step has
+// a known actor, a request and an expect (status or no_response); a
+// control step has exactly one control and nothing else.
+func (c ScenarioCase) validate() error {
+	if len(c.Actors) == 0 {
+		return fmt.Errorf("no actors")
+	}
+	for i, s := range c.Steps {
+		if s.Control != nil {
+			if s.Actor != "" || s.Request != nil || s.Expect != nil || s.Save != nil || s.Transport != nil {
+				return fmt.Errorf("step %d: control step with HTTP fields", i)
+			}
+			continue
+		}
+		if s.Request == nil || s.Expect == nil {
+			return fmt.Errorf("step %d: an HTTP step needs request and expect", i)
+		}
+		if _, ok := c.Actors[s.Actor]; !ok {
+			return fmt.Errorf("step %d: unknown actor %q", i, s.Actor)
+		}
+		if (s.Expect.Status == 0) == !s.Expect.NoResponse {
+			return fmt.Errorf("step %d: expect needs exactly one of status and no_response", i)
+		}
+		if s.Transport != nil && !s.Expect.NoResponse {
+			return fmt.Errorf("step %d: transport.drop_after_bytes requires no_response", i)
+		}
+	}
+	return nil
 }
 
 var varRef = regexp.MustCompile(`\$\{([a-z0-9_]+)\}`)

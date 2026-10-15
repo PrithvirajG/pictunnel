@@ -347,3 +347,173 @@ func readFile(t *testing.T, p string) []byte {
 	}
 	return b
 }
+
+func TestBootRefusesCorruptDatabase(t *testing.T) {
+	o := opts(t)
+	a := boot(t, o)
+	// Grow the file with a table created after the schema, so its pages
+	// sit at the end and corrupting them leaves the schema readable.
+	for _, q := range []string{
+		`CREATE TABLE filler (b BLOB)`,
+		`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000) INSERT INTO filler SELECT randomblob(1000) FROM n`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := a.Store().W.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db := filepath.Join(o.Config.DataDir, "pictunnel.db")
+	f, err := os.OpenFile(db, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := f.Stat()
+	// Keep the schema page; scribble over the later b-tree pages so the
+	// database opens but PRAGMA quick_check fails.
+	off := (fi.Size() * 3 / 4) &^ 4095
+	if off < 4096 {
+		off = 4096
+	}
+	junk := bytes.Repeat([]byte{0xA5}, int(fi.Size()-off))
+	if _, err := f.WriteAt(junk, off); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	_, err = app.New(context.Background(), o)
+	if err == nil {
+		t.Fatal("booted on a corrupt database")
+	}
+	if !strings.Contains(err.Error(), "restore it") || !strings.Contains(err.Error(), "backups") {
+		t.Fatalf("refusal without restore instructions: %v", err)
+	}
+	if !strings.Contains(err.Error(), "quick_check") {
+		t.Fatalf("expected the quick_check refusal: %v", err)
+	}
+	// The lock is released after a refused boot.
+	if _, err := os.Stat(filepath.Join(o.Config.DataDir, "pictunnel.lock")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBootBacksUpBeforeMigrating(t *testing.T) {
+	o := opts(t)
+	a := boot(t, o)
+	// Pretend the newest migration has not run yet.
+	for _, q := range []string{
+		`DROP INDEX assets_media_pending_idx`,
+		`DELETE FROM goose_db_version WHERE version_id = (SELECT MAX(version_id) FROM goose_db_version)`,
+	} {
+		if _, err := a.Store().W.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = a.Close()
+	b := boot(t, o)
+	backups, _ := filepath.Glob(filepath.Join(o.Config.DataDir, "backups", "pre-migrate-*.db"))
+	if len(backups) != 1 {
+		t.Fatalf("pre-migrate backups: %v", backups)
+	}
+	if n := count(t, b, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'assets_media_pending_idx'`); n != 1 {
+		t.Fatal("migration did not run after the backup")
+	}
+	_ = b.Close()
+	// No pending migrations → no new backup.
+	boot(t, o)
+	if again, _ := filepath.Glob(filepath.Join(o.Config.DataDir, "backups", "pre-migrate-*.db")); len(again) != 1 {
+		t.Fatalf("backup without pending migrations: %v", again)
+	}
+}
+
+func TestBootReenqueuesVideoJobs(t *testing.T) {
+	o := opts(t)
+	a := boot(t, o)
+	p := login(t, a, "alice")
+	unknown, err := upload(t, a, p, []byte("video one"), "a.mp4", "video/mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	notPlayable, err := upload(t, a, p, []byte("video two"), "b.mov", "video/quicktime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcoded, err := upload(t, a, p, []byte("video three"), "c.mov", "video/quicktime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`UPDATE jobs SET state = 'dead'`,
+		`UPDATE assets SET thumbnails_ready = 1`,
+		`UPDATE assets SET playable = 0 WHERE id IN ('` + notPlayable.AssetID + `', '` + transcoded.AssetID + `')`,
+	} {
+		if _, err := a.Store().W.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id := transcoded.AssetID
+	web := filepath.Join(o.Config.DataDir, "derived", id[0:2], id[2:4], id)
+	if err := os.MkdirAll(web, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(web, "web.mp4"), []byte("mp4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Close()
+	b := boot(t, o)
+	pending := func(kind, assetID string) int {
+		return count(t, b, `SELECT COUNT(*) FROM jobs WHERE state = 'pending' AND kind = ? AND dedupe_key = ?`, kind, assetID)
+	}
+	if pending(service.JobExtractMetadata, unknown.AssetID) != 1 {
+		t.Error("video with unknown playability: no extract_metadata")
+	}
+	if pending(service.JobTranscodeVideo, notPlayable.AssetID) != 1 {
+		t.Error("non-playable video without web.mp4: no transcode_video")
+	}
+	if n := count(t, b, `SELECT COUNT(*) FROM jobs WHERE state = 'pending' AND dedupe_key = ?`, transcoded.AssetID); n != 0 {
+		t.Errorf("transcoded video re-enqueued %d jobs", n)
+	}
+	if n := count(t, b, `SELECT COUNT(*) FROM jobs WHERE state = 'pending' AND kind = ?`, service.JobGenerateThumbnails); n != 0 {
+		t.Errorf("thumbnails re-enqueued although ready: %d", n)
+	}
+	if n := count(t, b, `SELECT COUNT(*) FROM jobs WHERE state = 'pending' AND max_attempts != ?`, service.MediaJobMaxAttempts); n != 0 {
+		t.Errorf("%d re-enqueued media jobs without max_attempts 3", n)
+	}
+}
+
+func TestRunWithoutLocalListener(t *testing.T) {
+	o := opts(t)
+	o.Config.Server.LocalAddr = ""
+	got := make(chan [2]string, 1)
+	o.Listening = func(h, l string) { got <- [2]string{h, l} }
+	a := boot(t, o)
+	if a.LocalSetupURL() != "" {
+		t.Fatalf("LocalSetupURL = %q with the listener off", a.LocalSetupURL())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+	select {
+	case ad := <-got:
+		if ad[0] == "" || ad[1] != "" {
+			t.Fatalf("listening %q", ad)
+		}
+	case err := <-done:
+		t.Fatalf("Run: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("not listening")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNonLoopbackLocalAddrRefused(t *testing.T) {
+	o := opts(t)
+	o.Config.Server.LocalAddr = "0.0.0.0:8080"
+	if _, err := app.New(context.Background(), o); err == nil || !strings.Contains(err.Error(), "local_addr") {
+		t.Fatalf("New with local_addr 0.0.0.0:8080: %v", err)
+	}
+}

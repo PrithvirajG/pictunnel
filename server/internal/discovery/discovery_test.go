@@ -91,3 +91,44 @@ func TestStartStopReal(t *testing.T) {
 func TestStopWithoutStart(t *testing.T) {
 	New("x", 1, nil, nil).Stop()
 }
+
+// failingResponder's Respond fails at once (e.g. the socket died).
+type failingResponder struct{}
+
+func (failingResponder) Add(dnssd.Service) (dnssd.ServiceHandle, error) { return nil, nil }
+func (failingResponder) Remove(dnssd.ServiceHandle)                     {}
+func (failingResponder) Respond(context.Context) error                  { return errors.New("socket closed") }
+func (failingResponder) Debug(context.Context, dnssd.ReadFunc)          {}
+
+func TestRespondErrorRebindsOnNextTick(t *testing.T) {
+	origNew, origTick := newResponder, recheckInterval
+	var mu sync.Mutex
+	binds := 0
+	newResponder = func() (dnssd.Responder, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		binds++
+		return failingResponder{}, nil
+	}
+	recheckInterval = 10 * time.Millisecond
+	t.Cleanup(func() { newResponder, recheckInterval = origNew, origTick })
+
+	r := New("x", 8443, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		n := binds
+		mu.Unlock()
+		if n >= 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("binds = %d; a failed responder must be rebound on the next tick", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.Stop()
+}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -134,11 +135,17 @@ func TestResetPasswordCLI(t *testing.T) {
 		t.Fatalf("reset while locked: %d %q", code, errOut.String())
 	}
 	_ = a.Close()
-
+	// The offline reset is a light boot: no TLS generation or renewal.
+	if err := os.RemoveAll(filepath.Join(dir, "tls")); err != nil {
+		t.Fatal(err)
+	}
 	out.Reset()
 	errOut.Reset()
 	if code := run(context.Background(), append([]string{"reset-password", "alice"}, serveFlags(dir)...), nil, &out, &errOut); code != 0 {
 		t.Fatalf("reset: %d %q", code, errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tls")); !os.IsNotExist(err) {
+		t.Errorf("reset-password touched TLS material: %v", err)
 	}
 	m := regexp.MustCompile(`New password for alice: (\S+)`).FindStringSubmatch(out.String())
 	if m == nil {

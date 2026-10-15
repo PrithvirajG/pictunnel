@@ -130,3 +130,40 @@ func TestRequestIDWithControlCharsReplaced(t *testing.T) {
 		}
 	}
 }
+
+// The loopback handler refuses peers that are not loopback, even with a
+// loopback Host, so a misbound local listener never exposes token-less
+// setup or non-Secure cookies to the LAN.
+func TestLoopbackRejectsNonLoopbackPeer(t *testing.T) {
+	a := httpapitest.New(t, httpapitest.Local())
+	for _, remote := range []string{"192.168.1.5:40000", "[2001:db8::7]:40000", "10.0.0.1:1", "garbage"} {
+		req := httptest.NewRequest("POST", "/api/v1/auth/setup", strings.NewReader(`{"username":"alice","password":"`+adminPass+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Host = "127.0.0.1:8080"
+		req.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		a.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"code":"forbidden"`) {
+			t.Fatalf("peer %s: %d %s", remote, rec.Code, rec.Body.String())
+		}
+	}
+	for _, remote := range []string{"127.0.0.1:40000", "127.8.9.10:1", "[::1]:40000"} {
+		req := httptest.NewRequest("GET", "/healthz", nil)
+		req.Host = "localhost"
+		req.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		a.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("loopback peer %s: %d %s", remote, rec.Code, rec.Body.String())
+		}
+	}
+	// The LAN handler accepts any peer.
+	l := httpapitest.New(t)
+	req := httptest.NewRequest("GET", "/healthz", nil)
+	req.RemoteAddr = "192.168.1.5:40000"
+	rec := httptest.NewRecorder()
+	l.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("LAN handler: %d", rec.Code)
+	}
+}

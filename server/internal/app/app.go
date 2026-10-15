@@ -79,9 +79,9 @@ type Options struct {
 	DisableScheduler bool
 	// Version is the server version (server info, mDNS TXT); default "dev".
 	Version string
-	// Listening, if set, is called by Run once both listeners are bound,
+	// Listening, if set, is called by Run once the listeners are bound,
 	// with their actual addresses (the HTTPS one is plain HTTP when
-	// tls.mode=off).
+	// tls.mode=off; localAddr is "" when the loopback listener is off).
 	Listening func(httpsAddr, localAddr string)
 }
 
@@ -434,16 +434,13 @@ func (a *App) ServerID() string { return a.serverID }
 // exists.
 func (a *App) SetupToken() string { return a.setupToken }
 
-// LocalSetupURL is the loopback URL where first-run setup is done.
+// LocalSetupURL is the loopback URL where first-run setup is done, or ""
+// when the loopback listener is disabled (server.local_addr empty).
 func (a *App) LocalSetupURL() string {
-	host, port, err := net.SplitHostPort(a.cfg.Server.LocalAddr)
-	if err != nil {
-		return "http://127.0.0.1:8080"
+	if a.cfg.Server.LocalAddr == "" {
+		return ""
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	return "http://" + net.JoinHostPort(host, port)
+	return "http://" + a.cfg.Server.LocalAddr
 }
 
 // Config is the configuration the app booted with.
@@ -491,10 +488,14 @@ func (a *App) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", a.cfg.Server.HTTPSAddr, err)
 	}
-	localLn, err := lc.Listen(ctx, "tcp", a.cfg.Server.LocalAddr)
-	if err != nil {
-		_ = httpsLn.Close()
-		return fmt.Errorf("listen %s: %w", a.cfg.Server.LocalAddr, err)
+	// The loopback listener is optional (server.local_addr = "" disables
+	// it); config validation only allows loopback addresses.
+	var localLn net.Listener
+	if a.cfg.Server.LocalAddr != "" {
+		if localLn, err = lc.Listen(ctx, "tcp", a.cfg.Server.LocalAddr); err != nil {
+			_ = httpsLn.Close()
+			return fmt.Errorf("listen %s: %w", a.cfg.Server.LocalAddr, err)
+		}
 	}
 	if tcp, ok := httpsLn.Addr().(*net.TCPAddr); ok {
 		a.httpsPort.Store(int32(tcp.Port))
@@ -519,12 +520,18 @@ func (a *App) Run(ctx context.Context) error {
 			errc <- err
 		}
 	}
+	servers := []*http.Server{httpsSrv}
 	go serve(httpsSrv, httpsLn)
-	go serve(localSrv, localLn)
-	a.log.Info("listening", "api", scheme+"://"+httpsLn.Addr().String(), "local", "http://"+localLn.Addr().String(),
+	localAddr := ""
+	if localLn != nil {
+		servers = append(servers, localSrv)
+		go serve(localSrv, localLn)
+		localAddr = localLn.Addr().String()
+	}
+	a.log.Info("listening", "api", scheme+"://"+httpsLn.Addr().String(), "local", localAddr,
 		"server_id", a.serverID, "fingerprint", a.Fingerprint())
 	if a.o.Listening != nil {
-		a.o.Listening(httpsLn.Addr().String(), localLn.Addr().String())
+		a.o.Listening(httpsLn.Addr().String(), localAddr)
 	}
 
 	var mdns discovery.Responder
@@ -547,7 +554,7 @@ func (a *App) Run(ctx context.Context) error {
 	sctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
 	var wg sync.WaitGroup
-	for _, s := range []*http.Server{httpsSrv, localSrv} {
+	for _, s := range servers {
 		wg.Add(1)
 		go func(s *http.Server) {
 			defer wg.Done()
