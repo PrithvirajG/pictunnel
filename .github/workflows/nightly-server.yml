@@ -1,0 +1,67 @@
+name: nightly-server
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * *"
+permissions:
+  contents: read
+jobs:
+  # Long property run (S§11.5, S§11.7). About 0.8 s per program on a dev
+  # machine, so 20000 programs take hours; the timeouts leave room under the
+  # 6 h job limit of hosted runners.
+  property:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: go test ./internal/app -run Property -rapid.checks=20000 -timeout 350m
+      - name: Keep rapid failure files
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapid-failures
+          path: server/internal/app/testdata/rapid/
+          if-no-files-found: ignore
+
+  # Long fuzzing, 5 minutes per target.
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - ./internal/service:FuzzDecodeCursor
+          - ./internal/service:FuzzPageToken
+          - ./internal/service:FuzzPairingCode
+          - ./internal/service:FuzzParseMetadata
+          - ./internal/storage:FuzzSanitizeFilename
+          - ./internal/media/probe:FuzzFastDate
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+        run: go test "${TARGET%%:*}" -run '^$' -fuzz "^${TARGET##*:}\$" -fuzztime 5m
+      - name: Keep the failing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-${{ strategy.job-index }}
+          path: server/**/testdata/fuzz/
+          if-no-files-found: ignore

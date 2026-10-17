@@ -160,10 +160,3 @@ func optString(p *string) string {
 	}
 	return *p
 }
-
-func optInt(p *int) int {
-	if p == nil {
-		return 0
-	}
-	return *p
-}
