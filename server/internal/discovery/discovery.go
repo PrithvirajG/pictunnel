@@ -106,8 +106,9 @@ func (r *responder) Start(ctx context.Context) error {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	r.cancel, r.done = cancel, make(chan struct{})
-	go r.loop(ctx, rsp)
+	done := make(chan struct{})
+	r.cancel, r.done = cancel, done
+	go r.loop(ctx, rsp, done)
 	return nil
 }
 
@@ -141,8 +142,9 @@ func (r *responder) bind() (dnssd.Responder, error) {
 
 // loop runs the responder and restarts it (goodbye, then a fresh probe and
 // announcement) whenever the interface addresses change.
-func (r *responder) loop(ctx context.Context, rsp dnssd.Responder) {
-	defer close(r.done)
+func (r *responder) loop(ctx context.Context, rsp dnssd.Responder, done chan struct{}) {
+	// done is passed in: Stop clears r.done concurrently.
+	defer close(done)
 	sig := interfaceSignature()
 	tick := time.NewTicker(recheckInterval)
 	defer tick.Stop()

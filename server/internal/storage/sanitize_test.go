@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -56,7 +57,8 @@ func TestFitPath(t *testing.T) {
 }
 
 func TestPathKeyCaseAndNFC(t *testing.T) {
-	a := storage.PathKey("2024\\05\\É.JPG")
+	// Native separators (backslash on Windows) normalise to "/".
+	a := storage.PathKey(filepath.Join("2024", "05", "É.JPG"))
 	b := storage.PathKey("2024/05/é.jpg")
 	if a != b {
 		t.Fatalf("%q != %q", a, b)
