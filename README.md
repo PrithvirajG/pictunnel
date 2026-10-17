@@ -15,6 +15,19 @@ Self-hosted photo and video backup that installs like a desktop app, backs up ph
 | `ml/` | Optional machine-learning worker | AGPL-3.0 |
 | `docs/` | Design specs, plans, ADRs | AGPL-3.0 |
 
+## Running the server
+
+```sh
+cd server
+go run ./cmd/pictunnel serve --data-dir ./data
+```
+
+On the first start the server prints a one-time setup token and its
+certificate pin. Create the admin from the same machine with
+`POST /api/v1/auth/setup` on the loopback listener (`http://127.0.0.1:8080`). Install ffmpeg for HEIC and video thumbnails and for
+transcoding. See [`docs/server/running.md`](docs/server/running.md) for
+configuration, TLS pinning, mDNS caveats and the data directory layout.
+
 ## Design
 
 - System design: [`docs/superpowers/specs/2026-10-03-pictunnel-system-design.md`](docs/superpowers/specs/2026-10-03-pictunnel-system-design.md)
