@@ -241,6 +241,11 @@ func (s *UploadService) Create(ctx context.Context, p Principal, in CreateInput)
 			return UploadView{}, err
 		}
 	}
+	// The free-space probe queries the staging dir, which a fresh data dir
+	// does not have until the first upload.
+	if err := s.d.FS.MkdirAll(s.stagingDir(), 0o755); err != nil {
+		return UploadView{}, uploadInternal("staging dir", err)
+	}
 	free := s.probeFree(in.Length + s.cfg.ReserveBytes)
 
 	var res createResult
