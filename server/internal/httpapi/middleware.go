@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -106,8 +107,31 @@ func (s *server) hostGuard(next http.Handler) http.Handler {
 			WriteProblem(w, r, apperr.Forbidden("Host is not a loopback name."))
 			return
 		}
+		if !safeMethod(r.Method) && crossSite(r) {
+			WriteProblem(w, r, apperr.Forbidden("Cross-site requests cannot change this server."))
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// crossSite reports whether a browser sent r from a page that is not served
+// from a loopback origin. The Host check alone does not stop a plain
+// cross-origin POST to 127.0.0.1; Origin and Sec-Fetch-Site do. Requests
+// without either header come from non-browser clients and pass.
+func crossSite(r *http.Request) bool {
+	if s := r.Header.Get("Sec-Fetch-Site"); s != "" && s != "same-origin" && s != "none" {
+		return true
+	}
+	o := r.Header.Get("Origin")
+	if o == "" {
+		return false
+	}
+	u, err := url.Parse(o)
+	if err != nil || u.Scheme != "http" && u.Scheme != "https" {
+		return true
+	}
+	return !loopbackHosts[strings.ToLower(u.Hostname())]
 }
 
 // loopbackPeer reports whether addr (host:port) is a loopback IP.

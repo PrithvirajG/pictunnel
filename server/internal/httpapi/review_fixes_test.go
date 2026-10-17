@@ -34,6 +34,36 @@ func TestLoopbackRejectsForeignHost(t *testing.T) {
 	wantStatus(t, resp, body, 200)
 }
 
+// A web page the operator visits must not be able to drive the token-less
+// setup on the loopback listener with a cross-site request.
+func TestLoopbackRejectsCrossSiteWrites(t *testing.T) {
+	a := httpapitest.New(t, httpapitest.Local())
+	for _, h := range []map[string]string{
+		{"Origin": "https://evil.example"},
+		{"Origin": "null"},
+		{"Origin": "http://localhost.evil.example:8080"},
+		{"Sec-Fetch-Site": "cross-site"},
+		{"Sec-Fetch-Site": "same-site"},
+	} {
+		req := a.Req(t, "POST", "/api/v1/auth/setup", setupBody)
+		for k, v := range h {
+			req.Header.Set(k, v)
+		}
+		resp, body := a.Do(t, req)
+		wantProblem(t, resp, body, 403, "forbidden")
+	}
+	// Reads stay open, and a same-origin page or a non-browser client works.
+	req := a.Req(t, "GET", "/healthz", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	resp, body := a.Do(t, req)
+	wantStatus(t, resp, body, 200)
+	req = a.Req(t, "POST", "/api/v1/auth/setup", setupBody)
+	req.Header.Set("Origin", "http://127.0.0.1:8080")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	resp, body = a.Do(t, req)
+	wantStatus(t, resp, body, 201)
+}
+
 func TestNosniffOnAllResponses(t *testing.T) {
 	a, s := withAdmin(t)
 	id := a.SeedAsset(t, s, []byte("bytes"), "n.jpg", "image/jpeg")
