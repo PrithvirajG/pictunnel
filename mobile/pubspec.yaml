@@ -40,3 +40,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: Bricolage Grotesque
+      fonts:
+        - asset: assets/fonts/BricolageGrotesque-Variable.ttf
+    - family: Figtree
+      fonts:
+        - asset: assets/fonts/Figtree-Variable.ttf
