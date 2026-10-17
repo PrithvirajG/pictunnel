@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.devtools.ksp")
 }
 
@@ -75,6 +76,9 @@ dependencies {
     ksp("androidx.room:room-compiler:2.8.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    // OkHttp 5 only. engine-api pins OkHttp 4.12, so :engine does not depend on it
+    // and hand-writes the few DTOs it needs (net/CheckApi.kt, net/ServerClient.kt).
+    implementation("com.squareup.okhttp3:okhttp:5.3.2")
 
     testImplementation(platform("org.junit:junit-bom:5.14.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -86,4 +90,6 @@ dependencies {
     testImplementation("androidx.test:core:1.7.0")
     testImplementation("androidx.room:room-testing:2.8.4")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver3:5.3.2")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:5.3.2")
 }
