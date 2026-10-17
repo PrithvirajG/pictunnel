@@ -13,3 +13,4 @@ web/src/lib/api/schema.d.ts linguist-generated=true
 mobile/packages/pictunnel_api/** linguist-generated=true
 mobile/android/engine-api/generated/** linguist-generated=true
 mobile/ios/EngineAPI/Sources/EngineAPI/Generated/** linguist-generated=true
+*.der binary
