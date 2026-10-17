@@ -33,7 +33,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are to be interpreted as in RFC 211
 | Rate limits | `429` + `Retry-After` (seconds). |
 | Compatibility | Within v1, changes MUST be additive. Clients MUST ignore unknown fields and MUST treat unknown enum values per §9 R7. Breaking changes require `/api/v2`. |
 | Open value sets | Response fields whose set of values may grow (verdicts, states, kinds, problem codes, roles, platforms in responses) are declared `type: string` with the known values listed in `x-known-values`, never as a closed `enum`, so generated clients cannot crash on a new value. Request-only fields MAY use `enum`. |
-| Version gate | `426 Upgrade Required` with code `client_too_old` when `PicTunnel-Client: <platform>/<version>` is below `min_client_version`. `GET /api/v1/server/info`, `/healthz` and `/readyz` are exempt from the version gate, since clients use server info to learn `min_client_version`. |
+| Version gate | `426 Upgrade Required` with code `client_too_old` when `PicTunnel-Client: <platform>/<version>` is below `min_client_version`. `GET /api/v1/server/info`, `/healthz` and `/readyz` are exempt from the version gate, since clients use server info to learn `min_client_version`. A missing header passes the gate (web viewer, curl), and so does a value that does not parse as `<platform>/<version>` with a numeric `major[.minor[.patch]]` version (pre-release and build suffixes are ignored), or a platform without a configured minimum. |
 
 ## 4. Endpoint catalogue (v1, defined in M0)
 
@@ -130,9 +130,12 @@ Prefixes make leaked tokens detectable by secret scanners. Opaque tokens (not JW
 4. `POST /pairing/redeem {code, device: {device_name, platform, app_version}}` → `201 {server_id, user, device, tokens}`.
 5. Manual setup without QR: user enters a URL and logs in; for a self-signed certificate the app shows the fingerprint's first 16 chars for comparison with the server's admin page (trust on first use) and then pins it.
 
+**Setup hijack guard.** `POST /auth/setup` on the loopback listener is accepted as-is. On any other listener it MUST carry `PicTunnel-Setup-Token`, the one-time token the server prints to its log and stdout on first boot. A missing or wrong token returns `403 forbidden`.
+
 ### 6.4 Discovery and transport
 - mDNS service `_pictunnel._tcp.local.`; TXT `sid`, `v` (server version), `api=1`, `fp16` (first 16 chars of `fp`). No secrets.
-- Default listeners: HTTPS `:8443` (all interfaces); HTTP `127.0.0.1:8080` for the local first-run page only.
+- Default listeners: HTTPS `:8443` (all interfaces); HTTP `127.0.0.1:8080`, the loopback listener, for first-run setup and local tools.
+- The loopback listener serves the full API to loopback peers only. A request whose peer address is not a loopback IP, or whose `Host` is not a loopback name (`localhost`, `127.0.0.1`, `[::1]`, any port), gets `403 forbidden`. The Host check blocks DNS rebinding against the token-less setup (§6.3) and the non-`Secure` session cookie.
 - `PICTUNNEL_TLS=off` is allowed only when explicitly set (behind a TLS-terminating proxy) and logs a warning at every start.
 
 ## 7. Sync protocol
@@ -229,7 +232,7 @@ Session states: `receiving` → `finalizing` → `done` | `failed`.
 ### 7.6 Browsing: change feed and snapshot
 - `GET /sync/changes?cursor=<c>&limit=500` → `{ "changes": [ { "seq": 1042, "kind": "asset.upsert", "asset": {…} }, { "seq": 1043, "kind": "asset.removed", "asset_id": "…" } ], "next_cursor": "…", "has_more": false }`.
 - Kinds in v1/M0: `asset.upsert` (full asset object; covers create, trash, restore, metadata updates) and `asset.removed` (purged). Clients MUST ignore unknown kinds (albums etc. are added later).
-- Change log retention: 90 days. Older cursor → `410 cursor_expired`.
+- Change log retention: 90 days. Older cursor → `410 cursor_expired`. Compaction deletes older entries and records the highest deleted `seq` as the change-log floor; a cursor at or below the floor is expired. When the head is at or below the floor, compaction raises the sequence to floor + 1, so a snapshot started afterwards gets a cursor above the floor instead of an already expired one.
 - `GET /sync/snapshot?page_token=&limit=1000` → first page includes `cursor` = the change-log head at snapshot start; assets ordered by `id`. After the last page the client continues with `/sync/changes?cursor=<cursor>`. Clients apply upserts keyed by `id`, ignoring any whose `updated_seq` is older than what they hold — this makes snapshot+feed overlap safe.
 - Calling `changes` without a cursor returns `400 cursor_required` (forces a snapshot first).
 

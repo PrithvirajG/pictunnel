@@ -172,7 +172,7 @@ Library rules: path decided once at ingest, never moved; collisions checked case
 | HTTP | stdlib `net/http` routing; `oapi-codegen` strict server |
 | DB | SQLite WAL via `modernc.org/sqlite`; one writer, reader pool |
 | Queries/migrations | `sqlc`; `goose` migrations embedded; auto-backup before migrating |
-| Uploads | `tusd` v2 as a library behind our auth, finalize hook into `assets` |
+| Uploads | Own tus handler (ADR 0006) |
 | Jobs | Table-backed queue: leases, exp. backoff + jitter, max attempts, dead-letter, idempotent enqueue via `dedupe_key` |
 | Metadata | `imagemeta` (pure Go) + `ffprobe` |
 | Thumbnails | Go pipeline for JPEG/PNG; ffmpeg for HEIC/AVIF/video; embedded preview for RAW |
@@ -258,9 +258,7 @@ pictunnel/
 ├── api/                    # LICENSE Apache-2.0
 │   ├── openapi.yaml
 │   └── protocol/{sync-protocol.md, vectors/}
-├── server/                 # Go: cmd/pictunnel, internal/{app,config,httpapi,auth,upload,assets,
-│                           #   blobstore,media,jobs,albums,share,search,geo,mlbridge,discovery,
-│                           #   tlsutil,tray,webui,store}, test/
+├── server/                 # Go: see 2A spec S§2.1
 ├── mobile/                 # LICENSE Apache-2.0; Flutter lib/{app,core,features}, pigeons/,
 │                           #   android/.../backup/, ios/Runner/Backup/
 ├── web/                    # SvelteKit src/{routes,lib}

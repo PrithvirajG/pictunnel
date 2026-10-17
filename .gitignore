@@ -6,6 +6,7 @@ Thumbs.db
 *.iml
 
 # Tooling caches
+.claude/worktrees/
 .cache/
 .task/
 node_modules/
@@ -14,6 +15,11 @@ api/build/
 # Go
 server/bin/
 server/dist/
+server/pictunnel
+server/pictunnel.exe
+server/cover.out
+# rapid failure files written by the property test
+server/internal/app/testdata/rapid/
 
 # Web
 web/.svelte-kit/

@@ -6,7 +6,10 @@
 Uploads must resume after drops and app kills, and iOS background sessions upload whole files from disk in a single request.
 
 ## Decision
-Use the tus 1.0.0 protocol with the creation, creation-with-upload, termination, expiration and checksum extensions, served by `tusd` v2 behind our auth. Upload creation is idempotent per `(owner, sha256)`, and the server verifies the full-file hash before committing.
+Use the tus 1.0.0 protocol with the creation, creation-with-upload, termination, expiration and checksum extensions, served by PicTunnel's own tus handler (`server/internal/httpapi/tus`) behind our auth. Upload creation is idempotent per `(owner, sha256)`, and the server verifies the full-file hash before committing.
 
 ## Consequences
 Standard client libraries exist for JavaScript, Kotlin and Swift. tus semantics live in the protocol document and vectors because OpenAPI cannot express them fully.
+
+## Amendment
+Amended 2026-10-13: the original plan was to serve tus with `tusd` v2. The sync-protocol §7.3 dedupe outcomes, the cooperative multi-device sessions and the finalize journal do not fit tusd's hook model. An own handler also keeps the dependency surface smaller. Interoperability with `tus-js-client` is covered by tests.

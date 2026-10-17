@@ -1,0 +1,18 @@
+{
+  "name": "pictunnel-interop-tus-js",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "tus-js-client interop test against a real PicTunnel server (S§11.6)",
+  "scripts": {
+    "test": "node upload.mjs"
+  },
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@10.34.6",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "tus-js-client": "4.3.1"
+  }
+}

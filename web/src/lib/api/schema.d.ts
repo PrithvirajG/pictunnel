@@ -790,7 +790,7 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description The caller may not access this resource. Code: `forbidden`. */
+        /** @description The caller may not access this resource, or a cookie-authenticated state-changing request lacks a valid `X-CSRF-Token`. Code: `forbidden`. */
         Forbidden: {
             headers: {
                 [name: string]: unknown;
@@ -811,6 +811,16 @@ export interface components {
         /** @description Codes: `length_mismatch`, `tombstoned`, `pair_primary_missing`, `setup_already_done`. */
         Conflict: {
             headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description `Tus-Resumable` is missing or unsupported. Code: `invalid_request`. `Tus-Version` lists the supported versions. */
+        PreconditionFailed: {
+            headers: {
+                "Tus-Version"?: string;
                 [name: string]: unknown;
             };
             content: {
@@ -1019,7 +1029,10 @@ export interface operations {
     setupFirstAdmin: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description First-run setup token printed once to the server log and stdout. Not required on the loopback listener; required on any other listener, where a missing or wrong token returns 403 `forbidden`. */
+                "PicTunnel-Setup-Token"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1039,7 +1052,9 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+            426: components["responses"]["UpgradeRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -1116,6 +1131,8 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     createPairingCode: {
@@ -1137,6 +1154,8 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            426: components["responses"]["UpgradeRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -1186,6 +1205,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     revokeDevice: {
@@ -1207,7 +1227,9 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     updateDevice: {
@@ -1236,7 +1258,9 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     checkContent: {
@@ -1263,6 +1287,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             426: components["responses"]["UpgradeRequired"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["ServiceUnavailable"];
@@ -1294,6 +1319,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             410: components["responses"]["Gone"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     getSnapshot: {
@@ -1321,6 +1347,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     createUpload: {
@@ -1358,8 +1385,12 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
             413: components["responses"]["PayloadTooLarge"];
+            423: components["responses"]["Locked"];
             426: components["responses"]["UpgradeRequired"];
             429: components["responses"]["TooManyRequests"];
             460: components["responses"]["ChecksumMismatch"];
@@ -1411,7 +1442,11 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            423: components["responses"]["Locked"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     getUploadOffset: {
@@ -1433,6 +1468,8 @@ export interface operations {
                     "Upload-Length": components["headers"]["UploadLength"];
                     "Upload-Expires": components["headers"]["UploadExpires"];
                     "PicTunnel-Asset-Id": components["headers"]["AssetId"];
+                    /** @description Always `no-store`. */
+                    "Cache-Control"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -1446,6 +1483,21 @@ export interface operations {
             };
             /** @description Unknown or expired upload; restart with createUpload. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            412: components["responses"]["PreconditionFailed"];
+            /** @description Another request holds the upload and the lock wait timed out. Code: `upload_locked` (no body on HEAD). */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The app is older than `min_client_version`. Code: `client_too_old` (no body on HEAD). */
+            426: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1478,6 +1530,7 @@ export interface operations {
                 headers: {
                     "Tus-Resumable": components["headers"]["TusResumable"];
                     "Upload-Offset": components["headers"]["UploadOffset"];
+                    "Upload-Expires": components["headers"]["UploadExpires"];
                     "PicTunnel-Asset-Id": components["headers"]["AssetId"];
                     "PicTunnel-Asset-Created": components["headers"]["AssetCreated"];
                     [name: string]: unknown;
@@ -1486,6 +1539,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             /** @description `offset_mismatch`: the request's Upload-Offset differs from the server's. The current offset is returned. */
             409: {
@@ -1497,7 +1551,10 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
             423: components["responses"]["Locked"];
+            426: components["responses"]["UpgradeRequired"];
             429: components["responses"]["TooManyRequests"];
             460: components["responses"]["ChecksumMismatch"];
             503: components["responses"]["ServiceUnavailable"];
@@ -1526,6 +1583,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     getAssetThumbnail: {
@@ -1541,7 +1599,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description `thumb` is 320 px on the long edge, `preview` is 1440 px. */
+            /** @description `thumb` is 320 px on the long edge, `preview` is 1600 px. */
             200: {
                 headers: {
                     ETag: components["headers"]["ETag"];
@@ -1551,8 +1609,10 @@ export interface operations {
                     "image/jpeg": string;
                 };
             };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     getAssetOriginal: {
@@ -1594,6 +1654,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             416: components["responses"]["RangeNotSatisfiable"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     getAssetPlayback: {
@@ -1616,6 +1677,7 @@ export interface operations {
                 };
                 content: {
                     "video/mp4": string;
+                    "video/webm": string;
                 };
             };
             /** @description Requested byte range. */
@@ -1626,11 +1688,13 @@ export interface operations {
                 };
                 content: {
                     "video/mp4": string;
+                    "video/webm": string;
                 };
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             416: components["responses"]["RangeNotSatisfiable"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     trashAssets: {
@@ -1657,6 +1721,8 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     restoreAssets: {
@@ -1683,6 +1749,8 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     purgeAssets: {
@@ -1709,6 +1777,8 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     emptyTrash: {
@@ -1730,6 +1800,8 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     listTombstones: {
@@ -1756,6 +1828,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
     deleteTombstone: {
@@ -1769,15 +1842,17 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Removed. */
+            /** @description Removed, or there was no tombstone for this content (idempotent). */
             204: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            404: components["responses"]["NotFound"];
+            403: components["responses"]["Forbidden"];
+            426: components["responses"]["UpgradeRequired"];
         };
     };
 }

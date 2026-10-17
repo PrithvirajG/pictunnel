@@ -2,29 +2,121 @@ name: ci-server
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, "feat/**"]
     paths: ["server/**", "api/openapi.yaml", "api/protocol/**", ".github/workflows/ci-server.yml"]
   pull_request:
     paths: ["server/**", "api/openapi.yaml", "api/protocol/**", ".github/workflows/ci-server.yml"]
 permissions:
   contents: read
 jobs:
+  # go test -race on every OS the server ships for (S§11.7): Windows and
+  # macOS matter for rename, fsync and case-insensitive filesystems.
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: server
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
+      # The media tests detect ffmpeg/ffprobe and skip without them; the
+      # Windows runner has no ffmpeg, so they skip there.
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      # -race needs cgo. The Windows runner image ships MinGW-w64 gcc on PATH;
+      # print it so a missing compiler fails here rather than mid-build.
+      - name: C compiler for -race (Windows)
+        if: runner.os == 'Windows'
+        run: gcc --version
+      - run: go vet ./...
+      # TestPropertySync runs a reduced program count under -race (see
+      # internal/app/race_on_test.go); the full property run is in checks.
+      - run: go test -race -timeout 30m ./...
+        env:
+          CGO_ENABLED: "1"
+
+  # Linux-only gates: lint (with the S§2.1 depguard rules), generated-code
+  # drift, the coverage gate, fuzz smoke and the property run.
+  checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.14.0
           working-directory: server
-      - run: go vet ./...
-        working-directory: server
-      - run: go test -race ./...
-        working-directory: server
+      - name: sqlc drift
+        run: go tool sqlc diff -f internal/store/sqlc.yaml
+      - name: oapi-codegen drift
+        run: |
+          (cd internal/httpapi && go tool oapi-codegen -config oapi-codegen.yaml ../../../api/openapi.yaml)
+          git diff --exit-code -- internal/httpapi/gen
+      - name: Coverage gate (85% per package and in total)
+        run: |
+          go test -coverprofile=cover.out ./internal/service/... ./internal/repository/... ./internal/httpapi/...
+          go run ./tools/ci/covergate -min 85 -exclude '(/gen|test)$' cover.out
+      - name: Fuzz smoke (20 s per target)
+        run: |
+          set -euo pipefail
+          for target in \
+            ./internal/service:FuzzDecodeCursor \
+            ./internal/service:FuzzPageToken \
+            ./internal/service:FuzzPairingCode \
+            ./internal/service:FuzzParseMetadata \
+            ./internal/storage:FuzzSanitizeFilename \
+            ./internal/media/probe:FuzzFastDate; do
+            pkg="${target%%:*}" name="${target##*:}"
+            echo "::group::$name"
+            go test "$pkg" -run '^$' -fuzz "^${name}\$" -fuzztime 20s
+            echo "::endgroup::"
+          done
+      # Without -race: -rapid.checks only exists in packages that import rapid.
+      - name: Property run (500 programs)
+        run: go test ./internal/app -run Property -rapid.checks=500 -timeout 30m
+
+  # tus-js-client against a real server (S§11.6).
+  interop:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server/test/interop/tus-js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: server/test/interop/tus-js/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: node upload.mjs
+
   build:
     runs-on: ubuntu-latest
     strategy:

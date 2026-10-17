@@ -2,7 +2,7 @@ name: ci-mobile
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, "feat/**"]
     paths: ["mobile/**", "api/protocol/**", "Taskfile.yml", ".github/workflows/ci-mobile.yml"]
   pull_request:
     paths: ["mobile/**", "api/protocol/**", "Taskfile.yml", ".github/workflows/ci-mobile.yml"]

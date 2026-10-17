@@ -2,7 +2,7 @@ name: ci-web
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, "feat/**"]
     paths: ["web/**", "api/openapi.yaml", "Taskfile.yml", ".github/workflows/ci-web.yml"]
   pull_request:
     paths: ["web/**", "api/openapi.yaml", "Taskfile.yml", ".github/workflows/ci-web.yml"]

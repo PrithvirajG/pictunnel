@@ -541,7 +541,8 @@ open class EngineApi(basePath: kotlin.String = defaultBasePath, client: Call.Fac
         val localVariableBody = null
         val localVariableQuery: MultiValueMap = mutableMapOf()
         val localVariableHeaders: MutableMap<String, String> = mutableMapOf()
-        
+        localVariableHeaders["Accept"] = "application/problem+json"
+
         return RequestConfig(
             method = RequestMethod.HEAD,
             path = "/api/v1/uploads/{upload_id}".replace("{"+"upload_id"+"}", encodeURIComponent(uploadId.toString())),

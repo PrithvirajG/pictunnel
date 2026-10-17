@@ -70,11 +70,11 @@ flowchart LR
 | `store` | Opens SQLite (writer + reader pool), `WithTx(ctx, fn)`, embedded goose migrations, integrity check, online backup | `store/queries` |
 | `store/queries` | sqlc output (generated, committed, drift-checked) | — |
 | `repository` | One type per table, pure CRUD on that table only (§3) | `store`, `store/queries`, `apperr` |
-| `service` | Orchestration and policy. Constructors take exactly the repositories they use. | `repository`, `storage`, `jobs`, `clock`, `apperr`, `contenthash` |
+| `service` | Orchestration and policy. Constructors take exactly the repositories they use. | `repository`, `store` (transactions), `storage`, `jobs`, `media`, `media/probe`, `clock`, `ids`, `apperr`, `contenthash` |
 | `storage` | Filesystem port: staging files, library moves (fsync/rename/copy), free-space query, path sanitization. Has an `FS` interface so tests can inject faults. | stdlib |
 | `jobs` | Durable queue runner: leases, backoff, dead-letter, periodic scheduling; handlers registered by `app` | `repository`, `clock` |
 | `apperr` | Every domain error, one file per flow (`auth.go`, `pairing.go`, `upload.go`, `sync.go`, `assets.go`, `request.go`); each carries its problem code | stdlib |
-| `httpapi` | Strict-server implementation of the generated interface, problem+json writer, middleware, auth extraction | `service`, `apperr`, `httpapi/gen` |
+| `httpapi` | Strict-server implementation of the generated interface, problem+json writer, middleware, auth extraction | `service`, `apperr`, `httpapi/gen`; `repository` row types only, for response mapping |
 | `httpapi/tus` | Hand-written tus handler mounted on `/api/v1/uploads` | `service`, `apperr` |
 | `tlsutil` | CA and leaf generation, renewal, SPKI fingerprint | stdlib, `x/crypto` |
 | `discovery` | mDNS responder for `_pictunnel._tcp` | `config` |
@@ -125,7 +125,7 @@ Design notes:
 ### 4.1 First-run setup
 - `setupFirstAdmin` succeeds only while `users` is empty (checked in the write transaction); afterwards it returns `409 setup_already_done`.
 - **Hijack guard (contract addition).** A request arriving on the loopback listener is accepted as-is. Any other request must carry `PicTunnel-Setup-Token`. That token is generated on first boot, printed once to the log and stdout, and stored as a hash in `server_state`. A missing or wrong token returns `403 forbidden`. This makes Docker and headless setup work without letting the first LAN visitor claim admin. The OpenAPI gains the optional header (an additive change).
-- Passwords are hashed with argon2id (`x/crypto/argon2`; m=64 MiB, t=3, p=2, 16-byte salt, PHC string). Minimum length is 10. The username is NFC-normalized and must match `^[a-z0-9][a-z0-9._-]{1,31}$`. `slug` equals the lowercased username and is used as the library folder.
+- Passwords are hashed with argon2id (`x/crypto/argon2`; m=64 MiB, t=3, p=2, 16-byte salt, PHC string). Minimum length is 10. The username is NFC-normalized and must match `^[a-z0-9][a-z0-9._-]{2,31}$` (3–32 characters). `slug` equals the lowercased username and is used as the library folder.
 
 ### 4.2 Tokens (§6.1 and §6.2)
 - Each token is 32 bytes from `crypto/rand`, base64url, prefixed `pt_at_`, `pt_rt_` or `pt_ws_`. Only the SHA-256 is stored.
