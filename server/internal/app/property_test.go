@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -214,9 +215,31 @@ func (r rapidTB) Failed() bool                      { return r.rt.Failed() }
 
 func (w *world) tb() testing.TB { return rapidTB{TB: w.t, rt: w.rt} }
 
+// raceChecks is the program count of TestPropertySync under -race, where
+// each program is several times slower.
+const raceChecks = 10
+
+// flagSet reports whether the named flag was set on the command line.
+func flagSet(name string) bool {
+	set := false
+	flag.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
+}
+
 // TestPropertySync runs random programs of 1–3 users with 1–4 devices each
 // over payloads from A/B/C/V and random 1 B–200 KiB payloads.
+// Under -short it is skipped; under -race it runs at most raceChecks
+// programs unless -rapid.checks is given explicitly (CI runs the full
+// property step without -race).
 func TestPropertySync(t *testing.T) {
+	if testing.Short() {
+		t.Skip("property test skipped with -short")
+	}
+	if raceEnabled && !flagSet("rapid.checks") {
+		if err := flag.Set("rapid.checks", strconv.Itoa(raceChecks)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, p := range fixedPayloads() {
 		if got := sha256Hex(p.data); got != p.sha {
 			t.Fatalf("payload %s: sha256 %s, P§10.1 says %s", p.name, got, p.sha)
@@ -1221,7 +1244,7 @@ func (w *world) actDeleteTombstone(t *rapid.T) {
 	u := w.pickUser(t, "user")
 	p := w.pickPayload(t)
 	resp, raw := w.send(w.newReq(http.MethodDelete, "/api/v1/tombstones/"+p.sha, u.devs[0].access, nil))
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+	if resp.StatusCode != http.StatusNoContent { // idempotent: 204 whether present or not
 		w.rt.Errorf("delete tombstone: %d %s", resp.StatusCode, raw)
 	}
 	if w.contentState(u, p.sha).tomb {

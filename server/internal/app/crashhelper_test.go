@@ -54,6 +54,9 @@ const (
 	crashExitCode = 137
 	// listenPrefix starts the line a child prints once it serves.
 	listenPrefix = "LISTEN "
+	// childTimeout bounds a child's start and exit; generous for slow
+	// -race CI runners where parallel children boot a full app each.
+	childTimeout = 60 * time.Second
 )
 
 func TestMain(m *testing.M) {
@@ -679,7 +682,7 @@ func startChild(t *testing.T, dataDir, libDir, fp string, cross bool) *crashProc
 	case p.addr = <-addr:
 	case <-p.done:
 		t.Fatalf("child exited before listening: %v\n%s", p.err, p.stderr)
-	case <-time.After(30 * time.Second):
+	case <-time.After(childTimeout):
 		t.Fatalf("child not listening\n%s", p.stderr)
 	}
 	return p
@@ -690,7 +693,7 @@ func (p *crashProc) wait(t *testing.T) int {
 	t.Helper()
 	select {
 	case <-p.done:
-	case <-time.After(30 * time.Second):
+	case <-time.After(childTimeout):
 		t.Fatalf("child did not exit\n%s", p.stderr)
 	}
 	return p.cmd.ProcessState.ExitCode()

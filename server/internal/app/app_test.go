@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -252,18 +251,6 @@ func TestPairingEndpoints(t *testing.T) {
 	if got := app.PairingEndpoints(ips, 8443, []string{"https://photos.example.com"}, false); len(got) != 1 || got[0] != "https://photos.example.com" {
 		t.Fatalf("tls off = %v", got)
 	}
-}
-
-// syncWriter collects log output across goroutines.
-type syncWriter struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (w *syncWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.b.Write(p)
 }
 
 func TestRunServesListeners(t *testing.T) {
