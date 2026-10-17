@@ -350,7 +350,12 @@ func (s *FinalizeService) Finalize(ctx context.Context, sess repository.UploadSe
 		existing, err := s.d.Assets.GetBySHA(ctx, tx, sess.OwnerID, sess.SHA256)
 		if err == nil {
 			settled = &FinalizeResult{AssetID: existing.ID}
-			if err := s.linkSource(ctx, tx, sess, meta, existing.ID, now); err != nil {
+			// Link devices that joined after the caller loaded the session.
+			linkMeta := meta
+			if curMeta, err := parseSessionMeta(cur); err == nil {
+				linkMeta.JoinedSources = curMeta.JoinedSources
+			}
+			if err := s.linkSource(ctx, tx, sess, linkMeta, existing.ID, now); err != nil {
 				return err
 			}
 			return s.d.UploadSessions.SetDone(ctx, tx, sess.ID, existing.ID, false, now)

@@ -226,7 +226,7 @@ async function main() {
         "--log.format=text",
         "--log.level=warn",
       ],
-      { cwd: dataDir, stdio: ["pipe", "pipe", "pipe"] },
+      { stdio: ["pipe", "pipe", "pipe"] },
     );
     server.stdout.setEncoding("utf8");
     server.stderr.setEncoding("utf8");
@@ -251,7 +251,13 @@ async function main() {
     if (process.env.INTEROP_KEEP === "1") {
       console.log(`kept ${dataDir}`);
     } else {
-      rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      try {
+        rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      } catch (err) {
+        // Windows can hold the directory briefly after the server exits;
+        // a leftover temp dir must not fail an otherwise passing run.
+        console.warn(`warning: could not remove ${dataDir}: ${err.message}`);
+      }
     }
   }
 }

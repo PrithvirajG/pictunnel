@@ -130,7 +130,7 @@ func (s *MaintenanceService) BackupDatabase(ctx context.Context) error {
 	if err := s.d.FS.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("backup_database: %w", err)
 	}
-	dst := filepath.Join(dir, "pictunnel-"+s.d.Clock.Now().Format("20060102")+".db")
+	dst := filepath.Join(dir, "pictunnel-"+s.d.Clock.Now().UTC().Format("20060102")+".db")
 	_, err := s.d.FS.Stat(dst)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):

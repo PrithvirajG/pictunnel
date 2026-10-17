@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/base64"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -101,6 +102,9 @@ func ParseUploadMetadata(header string) (UploadMeta, error) {
 }
 
 // validate checks the fields of a parsed (or caller-built) UploadMeta.
+// metaMaxLen bounds client strings that are stored in meta_json and rows.
+var metaMaxLen = map[string]int{"filename": 1024, "mime": 255, "local_id": 1024, "stack_key": 1024}
+
 func (m UploadMeta) validate() error {
 	if !sha256Re.MatchString(m.SHA256) {
 		return badMeta("sha256 is required as 64 lowercase hex digits")
@@ -113,6 +117,9 @@ func (m UploadMeta) validate() error {
 	for k, v := range map[string]string{"filename": m.Filename, "mime": m.Mime, "local_id": m.LocalID, "stack_key": m.StackKey} {
 		if !utf8.ValidString(v) || strings.ContainsRune(v, 0) {
 			return badMeta(k + " must be UTF-8 without NUL")
+		}
+		if max := metaMaxLen[k]; len(v) > max {
+			return badMeta(fmt.Sprintf("%s is longer than %d bytes", k, max))
 		}
 	}
 	switch m.PairRole {

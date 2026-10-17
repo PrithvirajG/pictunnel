@@ -152,6 +152,10 @@ func TestParseUploadMetadataRejects(t *testing.T) {
 		"invalid utf8 name": with("filename", "\xff\xfe"),
 		"nul in filename":   with("filename", "a\x00b"),
 		"invalid pair sha":  with("pair_role", "live_video") + ",pair_sha256 " + b64("zz"),
+		"long filename":     with("filename", strings.Repeat("a", 1025)),
+		"long local_id":     encodeMeta(base) + ",local_id " + b64(strings.Repeat("x", 1025)),
+		"long stack_key":    encodeMeta(base) + ",stack_key " + b64(strings.Repeat("x", 1025)),
+		"long mime":         with("mime", "image/"+strings.Repeat("x", 250)),
 	}
 	for name, h := range cases {
 		t.Run(name, func(t *testing.T) {

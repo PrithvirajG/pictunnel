@@ -70,11 +70,11 @@ flowchart LR
 | `store` | Opens SQLite (writer + reader pool), `WithTx(ctx, fn)`, embedded goose migrations, integrity check, online backup | `store/queries` |
 | `store/queries` | sqlc output (generated, committed, drift-checked) | — |
 | `repository` | One type per table, pure CRUD on that table only (§3) | `store`, `store/queries`, `apperr` |
-| `service` | Orchestration and policy. Constructors take exactly the repositories they use. | `repository`, `storage`, `jobs`, `clock`, `apperr`, `contenthash` |
+| `service` | Orchestration and policy. Constructors take exactly the repositories they use. | `repository`, `store` (transactions), `storage`, `jobs`, `media`, `media/probe`, `clock`, `ids`, `apperr`, `contenthash` |
 | `storage` | Filesystem port: staging files, library moves (fsync/rename/copy), free-space query, path sanitization. Has an `FS` interface so tests can inject faults. | stdlib |
 | `jobs` | Durable queue runner: leases, backoff, dead-letter, periodic scheduling; handlers registered by `app` | `repository`, `clock` |
 | `apperr` | Every domain error, one file per flow (`auth.go`, `pairing.go`, `upload.go`, `sync.go`, `assets.go`, `request.go`); each carries its problem code | stdlib |
-| `httpapi` | Strict-server implementation of the generated interface, problem+json writer, middleware, auth extraction | `service`, `apperr`, `httpapi/gen` |
+| `httpapi` | Strict-server implementation of the generated interface, problem+json writer, middleware, auth extraction | `service`, `apperr`, `httpapi/gen`; `repository` row types only, for response mapping |
 | `httpapi/tus` | Hand-written tus handler mounted on `/api/v1/uploads` | `service`, `apperr` |
 | `tlsutil` | CA and leaf generation, renewal, SPKI fingerprint | stdlib, `x/crypto` |
 | `discovery` | mDNS responder for `_pictunnel._tcp` | `config` |
