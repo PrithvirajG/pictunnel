@@ -1,7 +1,7 @@
 name: ci-repo
 on:
   push:
-    branches: [main]
+    branches: [main, "feat/**"]
   pull_request:
 permissions:
   contents: read

@@ -2,7 +2,7 @@ name: ci-api
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, "feat/**"]
     paths:
       - "api/**"
       - "server/internal/httpapi/**"
