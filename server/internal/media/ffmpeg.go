@@ -286,12 +286,19 @@ func inputArgs(path string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Uploaded files are untrusted: only real media demuxers may open them,
+	// so a playlist or concat script cannot pull in another user's file.
+	safe := []string{"-protocol_whitelist", "file", "-format_whitelist", inputFormats}
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	if image2Exts[ext] && strings.ContainsAny(filepath.Base(path), "%*?[{") {
-		return []string{"-f", "image2", "-pattern_type", "none", "-i", u}, nil
+		return append(safe, "-f", "image2", "-pattern_type", "none", "-i", u), nil
 	}
-	return []string{"-i", u}, nil
+	return append(safe, "-i", u), nil
 }
+
+// inputFormats lists the demuxers allowed to open uploaded media.
+const inputFormats = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpegts,mpeg,asf,flv," +
+	"image2,gif,png_pipe,jpeg_pipe,webp_pipe,tiff_pipe,bmp_pipe,heif"
 
 // tempName reserves a unique file name in dir matching pattern and returns
 // its path; the empty file exists until the caller removes or replaces it.

@@ -161,6 +161,43 @@ func TestFFmpegAwkwardNames(t *testing.T) {
 	}
 }
 
+// A playlist uploaded by one user must not make ffmpeg open another user's
+// file: only container demuxers for real media are allowed.
+func TestFFmpegRejectsPlaylists(t *testing.T) {
+	tl := toolsOrSkip(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "bob", "secret.mp4")
+	if err := os.MkdirAll(filepath.Dir(victim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	copyFile(t, fixture("clip_h264.mp4"), victim)
+	abs, err := filepath.Abs(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	playlist := "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nfile:" + abs + "\n#EXT-X-ENDLIST\n"
+	for _, name := range []string{"IMG_1.m3u8", "IMG_2.mp4"} {
+		src := filepath.Join(dir, "alice", name)
+		if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(src, []byte(playlist), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if p, err := FFprobe(ctx, tl, src); err == nil {
+			t.Errorf("%s: ffprobe opened a playlist: %+v", name, p)
+		}
+		out := filepath.Join(dir, "out-"+name)
+		if err := MakeThumbnails(ctx, tl, src, "video/mp4", true, out); err == nil {
+			t.Errorf("%s: thumbnails made from a playlist", name)
+		}
+		if err := Transcode(ctx, tl, src, filepath.Join(dir, "web-"+name+".mp4")); err == nil {
+			t.Errorf("%s: transcoded a playlist", name)
+		}
+	}
+}
+
 // topLevelBoxes lists the ISO-BMFF top-level box types of a file.
 func topLevelBoxes(t *testing.T, p string) []string {
 	t.Helper()
