@@ -1,5 +1,6 @@
 package io.github.prithvirajg.pictunnel.engine.net
 
+import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockWebServer
 import okhttp3.OkHttpClient
@@ -123,6 +124,66 @@ class EndpointsTest {
         assertEquals("/api/v1/uploads/x", endpoints.relativize("https://photos.example.com/api/v1/uploads/x"))
         assertEquals("/api/v1/uploads/x?a=1", endpoints.relativize("https://192.168.1.10:8443/api/v1/uploads/x?a=1"))
         assertEquals("/api/v1/uploads/x", endpoints.relativize("/api/v1/uploads/x"))
-        assertEquals(null, endpoints.relativize("https://elsewhere.example/api/v1/uploads/x"))
+        // Another origin is re-based by path: the bearer token never leaves the endpoints.
+        assertEquals("/api/v1/uploads/x", endpoints.relativize("https://elsewhere.example/api/v1/uploads/x"))
     }
+
+    @Test fun sslExceptionAfterConnectIsReset() =
+        runBlocking {
+            val second = MockWebServer().apply { start() }
+            try {
+                val http =
+                    OkHttpClient
+                        .Builder()
+                        .addNetworkInterceptor { throw javax.net.ssl.SSLException("bad record mac") }
+                        .build()
+                val endpoints = Endpoints(listOf("http://127.0.0.1:${server.port}", "http://127.0.0.1:${second.port}"))
+                val e = runCatching { endpoints.execute(http, "/x") { Request.Builder().url(it).build() } }.exceptionOrNull()
+                assertTrue(e is java.io.IOException, e.toString())
+                assertEquals(TRANSPORT_RESET, Problems.transport(e as java.io.IOException).transport)
+                assertEquals(0, second.requestCount)
+                // A bare SSLException that is not a handshake failure is not `tls` either.
+                assertEquals(TRANSPORT_RESET, Problems.transport(javax.net.ssl.SSLException("x")).transport)
+                assertEquals(TRANSPORT_TLS, Problems.transport(javax.net.ssl.SSLHandshakeException("x")).transport)
+            } finally {
+                second.close()
+            }
+        }
+
+    @Test fun connectedFailureIsNotRetriedOnNextEndpoint() =
+        runBlocking {
+            server.dispatcher =
+                object : mockwebserver3.Dispatcher() {
+                    override fun dispatch(request: mockwebserver3.RecordedRequest) =
+                        mockwebserver3.MockResponse
+                            .Builder()
+                            .onResponseStart(mockwebserver3.SocketEffect.CloseSocket())
+                            .build()
+                }
+            val second = MockWebServer().apply { start() }
+            try {
+                second.enqueue(json(201, "{}"))
+                val endpoints = Endpoints(listOf("http://127.0.0.1:${server.port}", "http://127.0.0.1:${second.port}"))
+                val e =
+                    runCatching {
+                        endpoints.execute(OkHttpClient(), "/api/v1/uploads") {
+                            Request.Builder().url(it).post("abc".toByteArray().toRequestBody()).build()
+                        }
+                    }.exceptionOrNull()
+                assertTrue(e is AfterConnectException, e.toString())
+                assertEquals(TRANSPORT_RESET, Problems.transport(e as java.io.IOException).transport)
+                assertEquals(0, second.requestCount, "R2: an ambiguous request is never re-sent elsewhere")
+                assertEquals(server.port, endpoints.active.port)
+            } finally {
+                second.close()
+            }
+        }
+
+    @Test fun redirectsAreNotFollowed() =
+        runBlocking {
+            server.enqueue(mockwebserver3.MockResponse.Builder().code(302).addHeader("Location", "https://evil.example/").build())
+            val endpoints = Endpoints(listOf("http://127.0.0.1:${server.port}"))
+            endpoints.execute(OkHttpClient(), "/x") { Request.Builder().url(it).build() }.use { assertEquals(302, it.code) }
+            assertEquals(1, server.requestCount)
+        }
 }

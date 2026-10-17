@@ -103,7 +103,7 @@ class PinningTest {
             val store = FakeStore(credsFor(server.base()).copy(pinSpki = spki(pinned)))
             val http = EngineHttp.newClient(pin = store.creds!!.pinSpki, clientHeader = CLIENT, systemTrust = system)
             val endpoints = Endpoints(store.creds!!.endpoints)
-            val auth = AuthManager(store, http, { 0L }, endpoints)
+            val auth = AuthManager(store, http, { 0L }, CLIENT, endpoints)
             val api = ServerClient(endpoints, auth, http, CLIENT)
 
             val opened = AtomicInteger()
@@ -120,5 +120,22 @@ class PinningTest {
             // Nothing reached the HTTP layer: neither the refresh token nor any request body.
             drain(server).forEach { assertEquals(0L, it.bodySize.coerceAtLeast(0L)) }
             assertEquals("pt_rt_0", store.creds!!.refreshToken)
+        }
+
+    @Test fun rejectsPinOfIssuingCa() =
+        runBlocking {
+            // The pin names the leaf's key; pinning the (untrusted) CA must not accept its leaves.
+            val ca = HeldCertificate.Builder().certificateAuthority(0).build()
+            val leaf = HeldCertificate.Builder().addSubjectAlternativeName("localhost").signedBy(ca).build()
+            serve(leaf, ca.certificate)
+            server.enqueue(json(200, "{}"))
+            val http = EngineHttp.newClient(pin = spki(ca), clientHeader = CLIENT, systemTrust = system)
+            val e = runCatching { get(http).close() }.exceptionOrNull()
+            assertTrue(e is java.io.IOException && e.involvesTls(), e.toString())
+            val endpoints = Endpoints(listOf(server.base()))
+            val e2 =
+                runCatching { endpoints.execute(http, "/api/v1/server/info") { Request.Builder().url(it).build() } }
+                    .exceptionOrNull() as java.io.IOException
+            assertEquals(TRANSPORT_TLS, Problems.transport(e2).transport)
         }
 }

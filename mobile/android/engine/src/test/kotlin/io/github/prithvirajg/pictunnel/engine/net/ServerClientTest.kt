@@ -45,13 +45,13 @@ class ServerClientTest {
 
     private fun stack(
         rest: (mockwebserver3.RecordedRequest) -> MockResponse,
-        authHttp: OkHttpClient = EngineHttp.newClient(null, CLIENT),
+        authHttp: OkHttpClient = OkHttpClient(), // AuthManager adds the client header itself
     ): Pair<ServerClient, AuthingDispatcher> {
         val d = AuthingDispatcher(rest)
         server.dispatcher = d
         val store = FakeStore(credsFor(server.base()))
         val endpoints = Endpoints(store.creds!!.endpoints)
-        val auth = AuthManager(store, authHttp, { 0L }, endpoints)
+        val auth = AuthManager(store, authHttp, { 0L }, CLIENT, endpoints)
         return ServerClient(endpoints, auth, OkHttpClient(), CLIENT) to d
     }
 

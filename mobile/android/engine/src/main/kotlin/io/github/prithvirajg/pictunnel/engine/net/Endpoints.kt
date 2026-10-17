@@ -7,6 +7,7 @@ import okhttp3.Connection
 import okhttp3.EventListener
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -23,6 +24,11 @@ class EndpointsUnreachableException(
     val tls: Boolean,
     cause: IOException,
 ) : IOException("no endpoint reachable", cause)
+
+/** A call failed after it acquired a connection, so the request may have reached the server. */
+class AfterConnectException(
+    cause: IOException,
+) : IOException("request failed after connecting: $cause", cause)
 
 /**
  * The server's endpoints in stored preference order (R9: LAN first, then
@@ -54,28 +60,31 @@ class Endpoints(
     }
 
     /**
-     * The path and query of [target] when it is a relative reference or an
-     * absolute URL on one of the endpoints; null for a URL on another origin.
+     * The path and query of [target], which is a relative reference or an
+     * absolute URL. Pairing stores origins only (P§6.3 `u`), and every server
+     * URL (a check's `upload.url`, a tus `Location`) names a resource on the
+     * server itself, so an absolute URL is always re-based onto the endpoints by
+     * its path. Requests therefore never leave the paired endpoints, and the
+     * bearer token is never sent to another origin.
      */
-    fun relativize(target: String): String? {
+    fun relativize(target: String): String {
         if (target.startsWith("/")) return target
-        val url = runCatching { target.toHttpUrl() }.getOrNull() ?: return null
-        val known = bases.any { it.scheme == url.scheme && it.host == url.host && it.port == url.port }
-        if (!known) return null
+        val url = target.toHttpUrlOrNull() ?: throw IllegalArgumentException("not a URL or absolute path: $target")
         return url.encodedPath + (url.encodedQuery?.let { "?$it" } ?: "")
     }
 
     /**
      * Sends a request built for [target] (a path such as `/api/v1/sync/check`,
-     * or an absolute URL) with fallback across endpoints. A URL on an unknown
-     * origin is sent as is, without fallback.
+     * or an absolute URL, re-based by [relativize]) with fallback across
+     * endpoints. Redirects are never followed. A failure after a connection was
+     * acquired is thrown as [AfterConnectException] and never retried elsewhere.
      */
     suspend fun execute(
         http: OkHttpClient,
         target: String,
         build: (HttpUrl) -> Request,
     ): Response {
-        val path = relativize(target) ?: return http.newCall(build(target.toHttpUrl())).await()
+        val path = relativize(target)
         val start = activeIndex
         val order = listOf(start) + bases.indices.filter { it != start }
         var tls = false
@@ -87,6 +96,8 @@ class Endpoints(
                 http
                     .newBuilder()
                     .eventListener(tracker)
+                    .followRedirects(false)
+                    .followSslRedirects(false)
                     .apply { if (isLan(base.host)) connectTimeout(lanConnectTimeoutMs, TimeUnit.MILLISECONDS) }
                     .build()
             try {
@@ -94,7 +105,8 @@ class Endpoints(
                 activeIndex = i
                 return response
             } catch (e: IOException) {
-                if (tracker.connected) throw e // the request may have reached the server
+                // The request may have reached the server: the outcome is unknown (R2).
+                if (tracker.connected) throw AfterConnectException(e)
                 if (e.involvesTls()) tls = true
                 last = e
             }

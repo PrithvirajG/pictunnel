@@ -1,5 +1,11 @@
 package io.github.prithvirajg.pictunnel.engine.net
 
+import org.junit.jupiter.api.Assertions.assertFalse
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.CountDownLatch
+import okhttp3.OkHttpClient
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -49,7 +55,7 @@ class AuthManagerTest {
             val store = FakeStore(credsFor(server.base()))
             val endpoints = Endpoints(store.creds!!.endpoints)
             val http = EngineHttp.newClient(null, CLIENT)
-            val auth = AuthManager(store, http, { System.nanoTime() / 1_000_000 }, endpoints)
+            val auth = AuthManager(store, http, { System.nanoTime() / 1_000_000 }, CLIENT, endpoints)
             val api = ServerClient(endpoints, auth, http, CLIENT)
 
             assertEquals("pt_at_1", auth.accessToken()) // warm: pt_at_1 is the token the server now rejects
@@ -81,7 +87,7 @@ class AuthManagerTest {
             val store = FakeStore(credsFor(server.base()))
             var repairs = 0
             val auth =
-                AuthManager(store, EngineHttp.newClient(null, CLIENT), { 0L }, Endpoints(store.creds!!.endpoints))
+                AuthManager(store, EngineHttp.newClient(null, CLIENT), { 0L }, CLIENT, Endpoints(store.creds!!.endpoints))
             auth.onNeedsRepair = { repairs++ }
 
             val out = auth.onUnauthorized()
@@ -101,11 +107,45 @@ class AuthManagerTest {
     @Test fun refreshNetworkFailureKeepsTokens() =
         runBlocking {
             val store = FakeStore(credsFor("http://127.0.0.1:1"))
-            val auth = AuthManager(store, EngineHttp.newClient(null, CLIENT), { 0L })
+            val auth = AuthManager(store, EngineHttp.newClient(null, CLIENT), { 0L }, CLIENT)
             val out = auth.onUnauthorized()
             val t = assertInstanceOf(RefreshOutcome.Transient::class.java, out)
             assertEquals(TRANSPORT_OFFLINE, t.raw?.transport)
             assertEquals(0, store.wipes)
             assertEquals("pt_rt_0", store.creds!!.refreshToken)
+        }
+
+    @Test fun cancelledRefreshKeepsRotatedToken() =
+        runBlocking {
+            val received = CountDownLatch(1)
+            server.dispatcher =
+                object : Dispatcher() {
+                    override fun dispatch(request: RecordedRequest): MockResponse {
+                        received.countDown() // the server has rotated the token
+                        Thread.sleep(300)
+                        return json(200, tokens(1))
+                    }
+                }
+            val store = FakeStore(credsFor(server.base()))
+            val auth = AuthManager(store, OkHttpClient(), { 0L }, CLIENT, Endpoints(store.creds!!.endpoints))
+            val job = launch(Dispatchers.IO) { auth.onUnauthorized() }
+            withContext(Dispatchers.IO) { assertTrue(received.await(5, TimeUnit.SECONDS)) }
+            job.cancel()
+            job.join()
+            assertEquals("pt_rt_1", store.creds!!.refreshToken, "the successor survives the cancellation")
+            assertEquals(CLIENT, server.takeRequest().headers["PicTunnel-Client"], "AuthManager adds the header itself")
+        }
+
+    @Test fun tokensNeverInOutcomes() =
+        runBlocking {
+            server.enqueue(json(200, """{"access_token":"pt_at_secret"}""")) // no refresh_token: unusable
+            val store = FakeStore(credsFor(server.base()))
+            val auth = AuthManager(store, OkHttpClient(), { 0L }, CLIENT, Endpoints(store.creds!!.endpoints))
+            val t = assertInstanceOf(RefreshOutcome.Transient::class.java, auth.onUnauthorized())
+            assertEquals(200, t.raw?.status)
+            assertNull(t.raw?.body)
+            assertFalse(t.toString().contains("pt_at_secret"))
+            assertEquals("pt_rt_0", store.creds!!.refreshToken)
+            assertFalse(RefreshOutcome.Refreshed("pt_at_secret").toString().contains("pt_at_secret"))
         }
 }

@@ -29,7 +29,7 @@ class TusClientTest {
         val store = FakeStore(credsFor(server.base()))
         val endpoints = Endpoints(store.creds!!.endpoints)
         val http = EngineHttp.newClient(pin = null, clientHeader = CLIENT)
-        val auth = AuthManager(store, http, { System.nanoTime() / 1_000_000 }, endpoints)
+        val auth = AuthManager(store, http, { System.nanoTime() / 1_000_000 }, CLIENT, endpoints)
         return ServerClient(endpoints, auth, OkHttpClient(), CLIENT)
     }
 
@@ -186,5 +186,27 @@ class TusClientTest {
             val reqs = drain(server).filter { it.method != "POST" }
             assertEquals(listOf("HEAD", "DELETE"), reqs.map { it.method })
             reqs.forEach { assertEquals("/api/v1/uploads/x", it.url.encodedPath) }
+        }
+
+    @Test fun fileBodyHonoursLength(
+        @org.junit.jupiter.api.io.TempDir dir: java.io.File,
+    ) {
+        val f = java.io.File(dir, "v.bin").apply { writeBytes(ByteArray(20) { it.toByte() }) }
+        val src = okio.Buffer()
+        UploadBody.of(f).open(8, 8).use { src.writeAll(it) }
+        assertEquals((8 until 16).map { it.toByte() }, src.readByteArray().toList())
+        val tail = okio.Buffer()
+        UploadBody.of(f).open(16, 4).use { tail.writeAll(it) }
+        assertEquals(4L, tail.size)
+        org.junit.jupiter.api.assertThrows<IllegalArgumentException> { UploadBody.of(f).open(16, 8) }
+    }
+
+    @Test fun foreignOriginUrlStaysOnEndpoints() =
+        runBlocking {
+            val api = client { MockResponse.Builder().code(200).addHeader("Upload-Offset", "0").build() }
+            api.tus.head("https://elsewhere.example/api/v1/uploads/x")
+            val req = drain(server).single { it.method == "HEAD" }
+            assertEquals("/api/v1/uploads/x", req.url.encodedPath)
+            assertEquals("Bearer pt_at_1", req.headers["Authorization"])
         }
 }

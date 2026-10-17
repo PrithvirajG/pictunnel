@@ -5,8 +5,10 @@ import io.github.prithvirajg.pictunnel.engine.decide.Action
 import io.github.prithvirajg.pictunnel.engine.decide.Decide
 import io.github.prithvirajg.pictunnel.engine.decide.Given
 import io.github.prithvirajg.pictunnel.engine.decide.ServerOutcome
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -22,7 +24,9 @@ sealed interface RefreshOutcome {
     /** New (or grace-window identical) tokens are in place. */
     data class Refreshed(
         val accessToken: String,
-    ) : RefreshOutcome
+    ) : RefreshOutcome {
+        override fun toString(): String = "Refreshed(accessToken=<redacted>)"
+    }
 
     /** Reused or revoked: credentials are wiped and the device must pair again. */
     data class NeedsRepair(
@@ -34,7 +38,11 @@ sealed interface RefreshOutcome {
         val raw: ServerOutcome,
     ) : RefreshOutcome
 
-    /** Network or server trouble: tokens are kept; retry later. */
+    /**
+     * Network or server trouble: tokens are kept; retry later. A 2xx whose
+     * body did not parse keeps its status and headers but never its body,
+     * which may hold tokens.
+     */
     data class Transient(
         val raw: ServerOutcome?,
     ) : RefreshOutcome
@@ -58,14 +66,22 @@ class AuthException(
  * it only schedules a proactive refresh before the 15 min lifetime ends, so
  * correctness never depends on the device clock (R10). [endpoints] defaults to
  * the stored endpoint list; pass the [ServerClient]'s instance to share the
- * active endpoint.
+ * active endpoint. Every refresh carries `PicTunnel-Client: [clientHeader]`
+ * whatever [client] is configured with.
+ *
+ * The refresh exchange, parse and save run non-cancellable (bounded by the
+ * client's timeouts): once the server has rotated the token, cancelling the
+ * caller must not lose the successor.
  */
 class AuthManager(
     private val store: CredentialStore,
-    private val client: OkHttpClient,
+    client: OkHttpClient,
     private val clock: () -> Long,
+    clientHeader: String,
     endpoints: Endpoints? = null,
 ) {
+    private val client: OkHttpClient = client.newBuilder().addInterceptor(ClientHeaderInterceptor(clientHeader)).build()
+
     @Volatile var onNeedsRepair: () -> Unit = {}
 
     private val mutex = Mutex()
@@ -106,7 +122,7 @@ class AuthManager(
             if (current != null && current != stale && clock() < accessValidUntil) {
                 return@withLock RefreshOutcome.Refreshed(current)
             }
-            doRefresh()
+            withContext(NonCancellable) { doRefresh() }
         }
 
     private suspend fun doRefresh(): RefreshOutcome {
@@ -129,7 +145,7 @@ class AuthManager(
                 val pair =
                     runCatching {
                         Problems.json.decodeFromJsonElement(TokenPair.serializer(), out.body ?: JsonObject(emptyMap()))
-                    }.getOrNull() ?: return RefreshOutcome.Transient(out)
+                    }.getOrNull() ?: return RefreshOutcome.Transient(out.copy(body = null))
                 // Persist the rotated refresh token before anything uses the new access token.
                 store.save(creds.copy(refreshToken = pair.refreshToken))
                 access = pair.accessToken

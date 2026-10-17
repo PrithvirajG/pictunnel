@@ -110,7 +110,12 @@ object EngineHttp {
         base: OkHttpClient = OkHttpClient(),
         systemTrust: X509TrustManager = PinningTrustManager.systemDefault(),
     ): OkHttpClient {
-        val b = base.newBuilder().addInterceptor(ClientHeaderInterceptor(clientHeader))
+        val b =
+            base
+                .newBuilder()
+                .addInterceptor(ClientHeaderInterceptor(clientHeader))
+                .followRedirects(false)
+                .followSslRedirects(false)
         val tm = if (pin.isNullOrEmpty()) systemTrust else PinningTrustManager(pin, systemTrust)
         val ctx = SSLContext.getInstance("TLS").apply { init(null, arrayOf(tm), null) }
         b.sslSocketFactory(ctx.socketFactory, tm)

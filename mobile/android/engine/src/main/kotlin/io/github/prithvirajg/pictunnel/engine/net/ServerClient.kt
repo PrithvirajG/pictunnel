@@ -117,7 +117,9 @@ class ServerClient(
             is RefreshOutcome.Refreshed -> error("not a failure")
             is RefreshOutcome.NeedsRepair -> raw ?: AuthManager.NO_CREDENTIALS
             is RefreshOutcome.ClientTooOld -> raw
-            is RefreshOutcome.Transient -> raw ?: ServerOutcome(null, emptyMap(), null, TRANSPORT_OFFLINE)
+            // A refresh that "succeeded" with an unreadable body is an unknown outcome, never a 2xx here.
+            is RefreshOutcome.Transient ->
+                raw?.takeUnless { it.status in 200..299 } ?: ServerOutcome(null, emptyMap(), null, TRANSPORT_RESET)
         }
 
     companion object {

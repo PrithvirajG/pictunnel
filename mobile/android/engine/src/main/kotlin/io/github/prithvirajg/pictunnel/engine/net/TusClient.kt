@@ -8,6 +8,7 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.Buffer
 import okio.BufferedSink
+import okio.ForwardingSource
 import okio.Source
 import okio.source
 import java.io.File
@@ -34,16 +35,33 @@ fun interface UploadBody {
 
         /** A seekable file (also the fallback copy for providers that cannot seek, M§5). */
         fun of(file: File): UploadBody =
-            UploadBody { offset, _ ->
+            UploadBody { offset, length ->
                 val raf = RandomAccessFile(file, "r")
                 try {
+                    require(offset >= 0 && length >= 0 && offset + length <= raf.length()) { "range out of bounds" }
                     raf.seek(offset)
-                    Channels.newInputStream(raf.channel).source()
+                    LimitedSource(Channels.newInputStream(raf.channel).source(), length)
                 } catch (e: Throwable) {
                     raf.close()
                     throw e
                 }
             }
+    }
+}
+
+/** Reads at most [limit] bytes of [delegate], then reports end of stream. */
+private class LimitedSource(
+    delegate: Source,
+    private var limit: Long,
+) : ForwardingSource(delegate) {
+    override fun read(
+        sink: Buffer,
+        byteCount: Long,
+    ): Long {
+        if (limit <= 0) return -1
+        val n = super.read(sink, minOf(byteCount, limit))
+        if (n > 0) limit -= n
+        return n
     }
 }
 

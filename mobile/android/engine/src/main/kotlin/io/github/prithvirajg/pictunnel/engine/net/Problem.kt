@@ -12,6 +12,8 @@ import java.net.SocketTimeoutException
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLPeerUnverifiedException
 
 /** The request timed out after the connection was up: the outcome is unknown (R2). */
 const val TRANSPORT_TIMEOUT = "timeout"
@@ -73,15 +75,19 @@ object Problems {
         }
 
     /**
-     * Maps an I/O failure to a transport outcome. [Endpoints] raises
-     * [EndpointsUnreachableException] when no endpoint got as far as a connection.
+     * Maps an I/O failure to a transport outcome. `tls` only when nothing was
+     * sent: every endpoint failed before a connection and at least one failed
+     * its handshake, or a bare handshake/peer-verification failure. Any failure
+     * after a connection was acquired ([AfterConnectException]), including a
+     * later SSLException, is `timeout` or `reset`: the outcome is unknown (R2).
      */
     fun transport(e: IOException): ServerOutcome {
         val kind =
-            when {
-                e is EndpointsUnreachableException -> if (e.tls) TRANSPORT_TLS else TRANSPORT_OFFLINE
-                e.involvesTls() -> TRANSPORT_TLS
-                e is SocketTimeoutException -> TRANSPORT_TIMEOUT
+            when (e) {
+                is EndpointsUnreachableException -> if (e.tls) TRANSPORT_TLS else TRANSPORT_OFFLINE
+                is AfterConnectException -> if (e.cause is SocketTimeoutException) TRANSPORT_TIMEOUT else TRANSPORT_RESET
+                is SSLHandshakeException, is SSLPeerUnverifiedException -> TRANSPORT_TLS
+                is SocketTimeoutException -> TRANSPORT_TIMEOUT
                 else -> TRANSPORT_RESET
             }
         return ServerOutcome(null, emptyMap(), null, kind)
