@@ -55,8 +55,18 @@ var notProduced = map[opStatus]string{
 	// 507: free space is checked when a session is created (P§7.3 #6),
 	// not per PATCH.
 	{"AppendUpload", 507}: "free space is checked at create only (P§7.3 #6)",
-	// deleteTombstone is idempotent (S§7): 204 whether present or not.
-	{"DeleteTombstone", 404}: "idempotent: 204 whether the tombstone exists or not (S§7)",
+	// 413: the size limit and the quota are checked at create (P§7.3 #1,
+	// #5); a PATCH body past Upload-Length is 400. Documented for clients.
+	{"AppendUpload", 413}: "max size and quota are checked at create only (P§7.3 #1, #5)",
+}
+
+// raceOnly are documented pairs the server produces only in a race this
+// suite cannot stage deterministically through HTTP (outcome #4 joining a
+// fully received session, P§7.3); the service tests cover the lock and
+// expiry paths below the HTTP layer.
+var raceOnly = map[opStatus]string{
+	{"CreateUpload", 423}: "outcome #4 on a fully received session while its finalize holds the lock",
+	{"CreateUpload", 404}: "outcome #4 on a fully received session that expires or loses its staging file before finalize",
 }
 
 // undocumentedByDesign are statuses the contract deliberately does not list
@@ -68,29 +78,15 @@ var undocumentedByDesign = map[opStatus]string{
 }
 
 // undocumentedPending are statuses the server produces that the contract
-// does not document yet; Task 19 (contract and doc changes) documents them,
-// and TestContractCoverage then requires their removal from this list.
-var undocumentedPending = map[opStatus]string{
-	// Found by the Task 14 review.
-	{"TerminateUpload", 423}: "upload_locked while another request holds the session",
-	{"CreateUpload", 404}:    "not_found for an unknown tus path or method",
-	{"CreateUpload", 423}:    "upload_locked when a joining create races a writer",
-	{"AppendUpload", 413}:    "request body above the server's body limit",
-	{"GetUploadOffset", 423}: "upload_locked when the lock wait of HEAD times out",
-	// Found by this coverage check.
-	{"CreatePairingCode", 403}: "forbidden: cookie session without a valid X-CSRF-Token",
-	{"CreateUpload", 403}:      "forbidden: cookie session without a valid X-CSRF-Token",
-	{"AppendUpload", 403}:      "forbidden: cookie session without a valid X-CSRF-Token",
-	{"TerminateUpload", 403}:   "forbidden: cookie session without a valid X-CSRF-Token",
-	{"GetAssetThumbnail", 400}: "invalid_request for a size other than thumb or preview",
-	{"DeleteTombstone", 400}:   "invalid_request for a path that is not 64 lowercase hex digits",
-}
+// does not document yet. Task 19 documented every earlier entry; a new one
+// must be documented in api/openapi.yaml and then removed from this list.
+var undocumentedPending = map[opStatus]string{}
 
 // documentedStatuses reads every (operation, status) pair of the embedded
 // spec, and each operation's HTTP method.
 func documentedStatuses(tb testing.TB) (map[opStatus]bool, map[string]string) {
 	tb.Helper()
-	doc, err := gen.GetSwagger()
+	doc, err := gen.GetSpec()
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -122,7 +118,7 @@ func coverageProblems(tb testing.TB, seen map[string][]int) []string {
 	}
 	var out []string
 	for p := range documented {
-		if !hit[p] && notProduced[p] == "" {
+		if !hit[p] && notProduced[p] == "" && raceOnly[p] == "" {
 			out = append(out, "documented but never hit: "+p.String())
 		}
 	}
@@ -182,6 +178,11 @@ func TestContractCoverage(t *testing.T) {
 	for p, why := range notProduced {
 		if !documented[p] || why == "" {
 			t.Errorf("notProduced %s: documented %v, reason %q", p, documented[p], why)
+		}
+	}
+	for p, why := range raceOnly {
+		if !documented[p] || why == "" {
+			t.Errorf("raceOnly %s: documented %v, reason %q", p, documented[p], why)
 		}
 	}
 	for _, list := range []map[opStatus]string{undocumentedPending, undocumentedByDesign} {

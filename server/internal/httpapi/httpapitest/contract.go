@@ -34,6 +34,7 @@ func init() {
 	// Binary media bodies of the asset endpoints.
 	openapi3filter.RegisterBodyDecoder("image/jpeg", openapi3filter.FileBodyDecoder)
 	openapi3filter.RegisterBodyDecoder("video/mp4", openapi3filter.FileBodyDecoder)
+	openapi3filter.RegisterBodyDecoder("video/webm", openapi3filter.FileBodyDecoder)
 	// kin-openapi does not check format: uuid by default; server ids are
 	// canonical lowercase UUIDs.
 	openapi3.DefineStringFormatValidator("uuid", openapi3.NewRegexpFormatValidator(
@@ -42,7 +43,7 @@ func init() {
 
 func loadSpec() (*openapi3.T, routers.Router, error) {
 	specOnce.Do(func() {
-		spec, specErr = gen.GetSwagger()
+		spec, specErr = gen.GetSpec()
 		if specErr != nil {
 			return
 		}

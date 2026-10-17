@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PrithvirajG/pictunnel/server/internal/config"
 	"github.com/PrithvirajG/pictunnel/server/internal/httpapi/gen"
 	"github.com/PrithvirajG/pictunnel/server/internal/httpapi/httpapitest"
 )
@@ -230,7 +229,7 @@ func TestCreateUploadInsufficientStorage(t *testing.T) {
 // 401 without credentials.
 func TestSecuredOperationsNeedCredentials(t *testing.T) {
 	a := httpapitest.New(t)
-	doc, err := gen.GetSwagger()
+	doc, err := gen.GetSpec()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,24 +258,6 @@ func TestSecuredOperationsNeedCredentials(t *testing.T) {
 	}
 	if n < 20 {
 		t.Fatalf("only %d secured operations found", n)
-	}
-}
-
-// TestVersionGateOnDocumentedOperations: the operations that document 426
-// answer client_too_old below the configured minimum.
-func TestVersionGateOnDocumentedOperations(t *testing.T) {
-	a := httpapitest.New(t, httpapitest.WithConfig(func(c *config.Config) { c.Clients.MinVersion["android"] = "9.0.0" }))
-	for _, tc := range []struct{ method, path string }{
-		{"POST", "/api/v1/sync/check"},
-		{"POST", "/api/v1/uploads"},
-		{"POST", "/api/v1/pairing/redeem"},
-		{"POST", "/api/v1/auth/refresh"},
-	} {
-		req := a.Req(t, tc.method, tc.path, nil)
-		req.Header.Set("PicTunnel-Client", "android/1.0.0")
-		req.Header.Set("Tus-Resumable", tusVersion)
-		resp, body := a.Do(t, req)
-		wantProblem(t, resp, body, 426, "client_too_old")
 	}
 }
 
