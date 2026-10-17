@@ -77,6 +77,48 @@ func TestBucketSetIsBounded(t *testing.T) {
 	}
 }
 
+// Rotating addresses inside one IPv6 /64 does not escape the per-IP limit.
+func TestLoginLimiterIPv6SharesSlash64(t *testing.T) {
+	_, h := limiterServer(t, RateLimits{LoginIP: Limit{Count: 3, Per: time.Minute}})
+	codes := map[int]int{}
+	for i := 1; i <= 10; i++ {
+		ip := fmt.Sprintf("[2001:db8:1:2::%x]", i)
+		codes[login(h, ip, fmt.Sprintf(`{"username":"user%d","password":"x"}`, i))]++
+	}
+	if codes[http.StatusTooManyRequests] != 7 {
+		t.Fatalf("codes %v, want 7 rejected", codes)
+	}
+	// Another /64 has its own budget.
+	if c := login(h, "[2001:db8:1:3::1]", `{"username":"other","password":"x"}`); c == http.StatusTooManyRequests {
+		t.Fatal("different /64 was limited")
+	}
+	if k := ipKey("[2001:db8::1]:5"); k != "2001:db8::/64" {
+		t.Errorf("ipKey v6 = %q", k)
+	}
+	if k := ipKey("10.1.2.3:5"); k != "10.1.2.3" {
+		t.Errorf("ipKey v4 = %q", k)
+	}
+}
+
+// A full set of active buckets is re-swept at most once per second, so a
+// flood of new keys does not run an O(n) scan per request.
+func TestFullSetSweepIsThrottled(t *testing.T) {
+	clk := clocktest.NewFake(time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC))
+	b := newBuckets(Limit{Count: 2, Per: time.Minute}, clk)
+	b.maxKeys = 10
+	for i := 0; i < 500; i++ {
+		b.take(fmt.Sprintf("k%d", i))
+	}
+	if b.fullSweeps > 1 {
+		t.Fatalf("full sweeps = %d, want ≤ 1 within a second", b.fullSweeps)
+	}
+	clk.Advance(2 * time.Second)
+	b.take("again")
+	if b.fullSweeps != 2 {
+		t.Fatalf("full sweeps = %d after a second, want 2", b.fullSweeps)
+	}
+}
+
 func TestLoginLimiterPerIP(t *testing.T) {
 	_, h := limiterServer(t, RateLimits{LoginIP: Limit{Count: 3, Per: time.Minute}})
 	for i := 0; i < 3; i++ {

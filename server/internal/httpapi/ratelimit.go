@@ -90,6 +90,10 @@ type buckets struct {
 	mu        sync.Mutex
 	m         map[string]*rate.Limiter
 	lastSweep time.Time
+	// lastFull and fullSweeps throttle and count the sweeps forced by a
+	// full set, which would otherwise scan the whole map per new key.
+	lastFull   time.Time
+	fullSweeps int
 }
 
 func newBuckets(l Limit, clk clock.Clock) *buckets {
@@ -124,7 +128,11 @@ func (b *buckets) take(key string) (time.Duration, bool) {
 	l := b.m[key]
 	if l == nil {
 		if len(b.m) >= b.maxKeys {
-			b.sweep(now)
+			if b.fullSweeps == 0 || now.Sub(b.lastFull) >= time.Second {
+				b.sweep(now)
+				b.lastFull = now
+				b.fullSweeps++
+			}
 			if len(b.m) >= b.maxKeys {
 				return b.limit.Per, false
 			}
@@ -166,6 +174,23 @@ func remoteIP(r *http.Request) string {
 	return host
 }
 
+// ipKey is the rate-limit key for a peer address: the IPv4 address, or the
+// IPv6 /64 a single host can rotate through freely.
+func ipKey(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil {
+		return host
+	}
+	if ip.To4() != nil {
+		return ip.String()
+	}
+	return (&net.IPNet{IP: ip.Mask(net.CIDRMask(64, 128)), Mask: net.CIDRMask(64, 128)}).String()
+}
+
 // loginUsername reads the username from a login body and restores the body.
 // A name that fails the username rule maps to one shared key.
 func loginUsername(r *http.Request) string {
@@ -197,7 +222,7 @@ func (s *server) rateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var b *buckets
-			key := remoteIP(r)
+			key := ipKey(r.RemoteAddr)
 			switch r.URL.Path {
 			case pathLogin:
 				if wait, ok := s.limits.loginIP.take(key); !ok {
