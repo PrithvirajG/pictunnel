@@ -202,6 +202,12 @@ tasks:
         {{.DOCKER_RUN}} -w /repo/mobile/packages/pictunnel_api {{.DART_IMAGE}}
         bash -c "dart pub get && cp pubspec.lock /repo/tools/dev/pictunnel_api.pubspec.lock"
 
+  gen:pigeon:
+    desc: Generate the Flutter <-> engine Pigeon bridge (Dart, Kotlin, Swift) from mobile/pigeons/engine.dart
+    cmds:
+      - >-
+        {{if eq .TOOLS_MODE "native"}}cd mobile && flutter pub get && dart run pigeon --input pigeons/engine.dart{{else}}{{.DOCKER_RUN}} -w /repo/mobile ghcr.io/cirruslabs/flutter:{{.FLUTTER_VERSION}} bash -c "flutter pub get && dart run pigeon --input pigeons/engine.dart"{{end}}
+
   test:mobile:
     desc: Analyze and test the Flutter app
     cmds:
@@ -230,6 +236,7 @@ tasks:
       - task: gen:kotlin
       - task: gen:swift
       - task: gen:dart
+      - task: gen:pigeon
 
   lint:
     desc: Contract lint and repository checks
