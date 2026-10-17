@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PrithvirajG/pictunnel/server/internal/repository"
+	"github.com/PrithvirajG/pictunnel/server/internal/storage/storagetest"
 )
 
 func TestBackupKeepsSeven(t *testing.T) {
@@ -165,5 +167,110 @@ func TestExpireTokens(t *testing.T) {
 	}
 	if _, err := pc.Get(ctx, e.st.R, "pold"); err != repository.ErrNotFound {
 		t.Fatalf("expired pairing code kept: %v", err)
+	}
+}
+
+// TestCompactChangeLogRaisesHeadAboveFloor: when compaction empties the
+// log, the head is raised to floor+1 so a new snapshot's cursor is not
+// already expired (P§7.6); an existing higher floor is never lowered; a
+// corrupt floor value fails the job instead of being overwritten.
+func TestCompactChangeLogRaisesHeadAboveFloor(t *testing.T) {
+	e := newSenv(t)
+	ctx := context.Background()
+	state := repository.ServerStateRepository{}
+	head := func() int64 {
+		h, err := (repository.ChangeLogRepository{}).Head(ctx, e.st.R)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	floor := func() string {
+		v, _, err := state.Get(ctx, e.st.R, "change_log_floor")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+
+	a := e.seed(t, e.alice, "a")
+	e.clk.Advance(95 * 24 * time.Hour)
+	if err := e.maint.CompactChangeLog(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if floor() != strconv.FormatInt(a.UpdatedSeq, 10) || head() != a.UpdatedSeq+1 {
+		t.Fatalf("floor %s head %d, want %d and %d", floor(), head(), a.UpdatedSeq, a.UpdatedSeq+1)
+	}
+	// A cursor at the new head is valid: it is above the floor.
+	if _, _, _, err := e.feed.Changes(ctx, e.alice, EncodeCursor(head()), 0); err != nil {
+		t.Fatalf("cursor at the raised head: %v", err)
+	}
+
+	// A floor above anything deleted stays; the head follows it.
+	if err := state.Set(ctx, e.st.W, "change_log_floor", "1000"); err != nil {
+		t.Fatal(err)
+	}
+	e.seed(t, e.alice, "c")
+	e.clk.Advance(95 * 24 * time.Hour)
+	if err := e.maint.CompactChangeLog(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if floor() != "1000" || head() != 1001 {
+		t.Fatalf("floor %s head %d, want 1000 and 1001", floor(), head())
+	}
+
+	if err := state.Set(ctx, e.st.W, "change_log_floor", "not-a-number"); err != nil {
+		t.Fatal(err)
+	}
+	e.seed(t, e.alice, "d")
+	e.clk.Advance(95 * 24 * time.Hour)
+	if err := e.maint.CompactChangeLog(ctx); err == nil {
+		t.Fatal("corrupt floor accepted")
+	}
+	if floor() != "not-a-number" {
+		t.Fatalf("corrupt floor overwritten: %s", floor())
+	}
+}
+
+// TestBackupFailedRenameRetries: a backup whose final rename fails leaves
+// no file under the final name (only the temp file); the next run replaces
+// the stale temp file and completes. An unusable backups dir is an error.
+func TestBackupFailedRenameRetries(t *testing.T) {
+	e := newSenv(t)
+	ctx := context.Background()
+	e.seed(t, e.alice, "x")
+	dir := filepath.Join(e.dataDir, "backups")
+	dst := filepath.Join(dir, "pictunnel-"+e.clk.Now().Format("20060102")+".db")
+	healthy := e.maint.d.FS
+	e.maint.d.FS = &storagetest.FaultFS{FS: healthy, RenameErr: func(string, string) error { return errors.New("disk full") }}
+	if err := e.maint.BackupDatabase(ctx); err == nil {
+		t.Fatal("backup succeeded although the rename failed")
+	}
+	if _, err := os.Stat(dst); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("final backup exists after a failed rename: %v", err)
+	}
+	if _, err := os.Stat(dst + ".tmp"); err != nil {
+		t.Fatalf("temp backup missing: %v", err)
+	}
+	e.maint.d.FS = healthy
+	if err := e.maint.BackupDatabase(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Fatalf("retry wrote no backup: %v", err)
+	}
+	if _, err := os.Stat(dst + ".tmp"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temp backup left behind: %v", err)
+	}
+
+	// A file where the backups dir belongs.
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.maint.BackupDatabase(ctx); err == nil {
+		t.Fatal("backup into a file succeeded")
 	}
 }

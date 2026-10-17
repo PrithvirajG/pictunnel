@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/PrithvirajG/pictunnel/server/internal/repository"
@@ -143,4 +144,45 @@ func TestPlaybackRules(t *testing.T) {
 	if err != nil || mime != "video/quicktime" || readAll(t, f) != "live motion" {
 		t.Fatalf("live playback: %q %v", mime, err)
 	}
+}
+
+// TestPlaybackMissingFilesAreNotFound: a library file that vanished from
+// disk is not_found (the client stops retrying), never an internal error;
+// a Live Photo row without its video component is not_found too.
+func TestPlaybackMissingFilesAreNotFound(t *testing.T) {
+	e := newSenv(t)
+	ctx := context.Background()
+	playable := true
+	mp4 := e.seed(t, e.alice, "h264 video", withMime("video/mp4", "video"))
+	err := e.st.WithTx(ctx, func(tx *sql.Tx) error {
+		return repository.AssetsRepository{}.UpdateMetadata(ctx, tx, mp4.ID, repository.MetadataUpdate{
+			TakenAtSource: mp4.TakenAtSource, Playable: &playable,
+		}, mp4.UpdatedSeq)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(e.libDir, filepath.FromSlash(mp4.OriginalPath))); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = e.assets.OpenPlayback(ctx, e.alice, mp4.ID)
+	wantCode(t, err, "not_found")
+	_, _, err = e.assets.OpenOriginal(ctx, e.alice, mp4.ID)
+	wantCode(t, err, "not_found")
+
+	live := e.seed(t, e.alice, "live still")
+	e.attachLive(t, live, "live motion")
+	lv, err := repository.LiveVideosRepository{}.GetByAsset(ctx, e.st.R, live.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(e.libDir, filepath.FromSlash(lv.OriginalPath))); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = e.assets.OpenPlayback(ctx, e.alice, live.ID)
+	wantCode(t, err, "not_found")
+
+	orphan := e.seed(t, e.alice, "orphan still", withMime("image/heic", assetKindLive))
+	_, _, err = e.assets.OpenPlayback(ctx, e.alice, orphan.ID)
+	wantCode(t, err, "not_found")
 }

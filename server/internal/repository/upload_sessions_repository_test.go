@@ -134,3 +134,24 @@ func TestUploadSessionsLifecycle(t *testing.T) {
 		t.Fatalf("after Delete: %v", err)
 	}
 }
+
+func TestUploadSessionsSetMetaJSON(t *testing.T) {
+	ctx := context.Background()
+	s := repotest.NewStore(t)
+	repotest.SeedUser(t, s, "o1")
+	repotest.SeedDevice(t, s, "o1", "d1")
+	r := repository.UploadSessionsRepository{}
+	if err := r.Insert(ctx, s.W, newSession("u1", "o1", "sha1")); err != nil {
+		t.Fatal(err)
+	}
+	const meta = `{"filename":"a.jpg","joined_sources":[{"device_id":"d2"}]}`
+	if err := r.SetMetaJSON(ctx, s.W, "u1", meta); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.Get(ctx, s.R, "u1"); err != nil || got.MetaJSON != meta {
+		t.Fatalf("meta after SetMetaJSON: %q %v", got.MetaJSON, err)
+	}
+	if err := r.SetMetaJSON(ctx, s.W, "missing", meta); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("SetMetaJSON on a missing session: %v", err)
+	}
+}
