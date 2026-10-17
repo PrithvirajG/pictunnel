@@ -275,6 +275,7 @@ class AuthApi {
   ///
   /// Parameters:
   /// * [setupRequest] 
+  /// * [picTunnelSetupToken] - First-run setup token printed once to the server log and stdout. Not required on the loopback listener; required on any other listener, where a missing or wrong token returns 403 `forbidden`.
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
   /// * [extras] - Can be used to add flags to the request
@@ -286,6 +287,7 @@ class AuthApi {
   /// Throws [DioException] if API call or serialization fails
   Future<Response<SetupResponse>> setupFirstAdmin({ 
     required SetupRequest setupRequest,
+    String? picTunnelSetupToken,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,
@@ -297,6 +299,7 @@ class AuthApi {
     final _options = Options(
       method: r'POST',
       headers: <String, dynamic>{
+        if (picTunnelSetupToken != null) r'PicTunnel-Setup-Token': picTunnelSetupToken,
         ...?headers,
       },
       extra: <String, dynamic>{

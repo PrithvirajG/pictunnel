@@ -161,8 +161,14 @@ extension APIProtocol {
     ///
     /// - Remark: HTTP `HEAD /api/v1/uploads/{upload_id}`.
     /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/head(getUploadOffset)`.
-    public func getUploadOffset(path: Operations.getUploadOffset.Input.Path) async throws -> Operations.getUploadOffset.Output {
-        try await getUploadOffset(Operations.getUploadOffset.Input(path: path))
+    public func getUploadOffset(
+        path: Operations.getUploadOffset.Input.Path,
+        headers: Operations.getUploadOffset.Input.Headers = .init()
+    ) async throws -> Operations.getUploadOffset.Output {
+        try await getUploadOffset(Operations.getUploadOffset.Input(
+            path: path,
+            headers: headers
+        ))
     }
     /// Remove a tombstone so the content can be backed up again
     ///
@@ -716,6 +722,34 @@ public enum Components {
                 self.body = body
             }
         }
+        public struct Forbidden: Sendable, Hashable {
+            /// - Remark: Generated from `#/components/responses/Forbidden/content`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/components/responses/Forbidden/content/application\/problem+json`.
+                case application_problem_plus_json(Components.Schemas.Problem)
+                /// The associated value of the enum case if `self` is `.application_problem_plus_json`.
+                ///
+                /// - Throws: An error if `self` is not `.application_problem_plus_json`.
+                /// - SeeAlso: `.application_problem_plus_json`.
+                public var application_problem_plus_json: Components.Schemas.Problem {
+                    get throws {
+                        switch self {
+                        case let .application_problem_plus_json(body):
+                            return body
+                        }
+                    }
+                }
+            }
+            /// Received HTTP response body
+            public var body: Components.Responses.Forbidden.Body
+            /// Creates a new `Forbidden`.
+            ///
+            /// - Parameters:
+            ///   - body: Received HTTP response body
+            public init(body: Components.Responses.Forbidden.Body) {
+                self.body = body
+            }
+        }
         public struct NotFound: Sendable, Hashable {
             /// - Remark: Generated from `#/components/responses/NotFound/content`.
             @frozen public enum Body: Sendable, Hashable {
@@ -769,6 +803,53 @@ public enum Components {
             /// - Parameters:
             ///   - body: Received HTTP response body
             public init(body: Components.Responses.Conflict.Body) {
+                self.body = body
+            }
+        }
+        public struct PreconditionFailed: Sendable, Hashable {
+            /// - Remark: Generated from `#/components/responses/PreconditionFailed/headers`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/components/responses/PreconditionFailed/headers/Tus-Version`.
+                public var Tus_hyphen_Version: Swift.String?
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - Tus_hyphen_Version:
+                public init(Tus_hyphen_Version: Swift.String? = nil) {
+                    self.Tus_hyphen_Version = Tus_hyphen_Version
+                }
+            }
+            /// Received HTTP response headers
+            public var headers: Components.Responses.PreconditionFailed.Headers
+            /// - Remark: Generated from `#/components/responses/PreconditionFailed/content`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/components/responses/PreconditionFailed/content/application\/problem+json`.
+                case application_problem_plus_json(Components.Schemas.Problem)
+                /// The associated value of the enum case if `self` is `.application_problem_plus_json`.
+                ///
+                /// - Throws: An error if `self` is not `.application_problem_plus_json`.
+                /// - SeeAlso: `.application_problem_plus_json`.
+                public var application_problem_plus_json: Components.Schemas.Problem {
+                    get throws {
+                        switch self {
+                        case let .application_problem_plus_json(body):
+                            return body
+                        }
+                    }
+                }
+            }
+            /// Received HTTP response body
+            public var body: Components.Responses.PreconditionFailed.Body
+            /// Creates a new `PreconditionFailed`.
+            ///
+            /// - Parameters:
+            ///   - headers: Received HTTP response headers
+            ///   - body: Received HTTP response body
+            public init(
+                headers: Components.Responses.PreconditionFailed.Headers = .init(),
+                body: Components.Responses.PreconditionFailed.Body
+            ) {
+                self.headers = headers
                 self.body = body
             }
         }
@@ -1565,6 +1646,29 @@ public enum Operations {
                     }
                 }
             }
+            /// The caller may not access this resource, or a cookie-authenticated state-changing request lacks a valid `X-CSRF-Token`. Code: `forbidden`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/sync/check/post(checkContent)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            public var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// The app is older than `min_client_version`. Code: `client_too_old`.
             ///
             /// - Remark: Generated from `#/paths//api/v1/sync/check/post(checkContent)/responses/426`.
@@ -1869,6 +1973,52 @@ public enum Operations {
                     }
                 }
             }
+            /// The caller may not access this resource, or a cookie-authenticated state-changing request lacks a valid `X-CSRF-Token`. Code: `forbidden`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/post(createUpload)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            public var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Not found, or not generated yet. Codes: `not_found`, `not_ready`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/post(createUpload)/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Components.Responses.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Components.Responses.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// Codes: `length_mismatch`, `tombstoned`, `pair_primary_missing`, `setup_already_done`.
             ///
             /// - Remark: Generated from `#/paths//api/v1/uploads/post(createUpload)/responses/409`.
@@ -1892,6 +2042,29 @@ public enum Operations {
                     }
                 }
             }
+            /// `Tus-Resumable` is missing or unsupported. Code: `invalid_request`. `Tus-Version` lists the supported versions.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/post(createUpload)/responses/412`.
+            ///
+            /// HTTP response code: `412 preconditionFailed`.
+            case preconditionFailed(Components.Responses.PreconditionFailed)
+            /// The associated value of the enum case if `self` is `.preconditionFailed`.
+            ///
+            /// - Throws: An error if `self` is not `.preconditionFailed`.
+            /// - SeeAlso: `.preconditionFailed`.
+            public var preconditionFailed: Components.Responses.PreconditionFailed {
+                get throws {
+                    switch self {
+                    case let .preconditionFailed(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "preconditionFailed",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// Codes: `file_too_large`, `quota_exceeded`.
             ///
             /// - Remark: Generated from `#/paths//api/v1/uploads/post(createUpload)/responses/413`.
@@ -1910,6 +2083,29 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "contentTooLarge",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Another request is writing to this upload. Code: `upload_locked`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/post(createUpload)/responses/423`.
+            ///
+            /// HTTP response code: `423 code423`.
+            case code423(Components.Responses.Locked)
+            /// The associated value of the enum case if `self` is `.code423`.
+            ///
+            /// - Throws: An error if `self` is not `.code423`.
+            /// - SeeAlso: `.code423`.
+            public var code423: Components.Responses.Locked {
+                get throws {
+                    switch self {
+                    case let .code423(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "code423",
                             response: self
                         )
                     }
@@ -2233,6 +2429,10 @@ public enum Operations {
                     public var Tus_hyphen_Resumable: Components.Headers.TusResumable?
                     /// - Remark: Generated from `#/paths/api/v1/uploads/{upload_id}/PATCH/responses/204/headers/Upload-Offset`.
                     public var Upload_hyphen_Offset: Components.Headers.UploadOffset?
+                    /// HTTP-date after which the upload session expires.
+                    ///
+                    /// - Remark: Generated from `#/paths/api/v1/uploads/{upload_id}/PATCH/responses/204/headers/Upload-Expires`.
+                    public var Upload_hyphen_Expires: Components.Headers.UploadExpires?
                     /// Asset the upload resolved to.
                     ///
                     /// - Remark: Generated from `#/paths/api/v1/uploads/{upload_id}/PATCH/responses/204/headers/PicTunnel-Asset-Id`.
@@ -2246,16 +2446,19 @@ public enum Operations {
                     /// - Parameters:
                     ///   - Tus_hyphen_Resumable:
                     ///   - Upload_hyphen_Offset:
+                    ///   - Upload_hyphen_Expires: HTTP-date after which the upload session expires.
                     ///   - PicTunnel_hyphen_Asset_hyphen_Id: Asset the upload resolved to.
                     ///   - PicTunnel_hyphen_Asset_hyphen_Created: `true` when this request created a new asset, `false` when it resolved to an existing one.
                     public init(
                         Tus_hyphen_Resumable: Components.Headers.TusResumable? = nil,
                         Upload_hyphen_Offset: Components.Headers.UploadOffset? = nil,
+                        Upload_hyphen_Expires: Components.Headers.UploadExpires? = nil,
                         PicTunnel_hyphen_Asset_hyphen_Id: Components.Headers.AssetId? = nil,
                         PicTunnel_hyphen_Asset_hyphen_Created: Components.Headers.AssetCreated? = nil
                     ) {
                         self.Tus_hyphen_Resumable = Tus_hyphen_Resumable
                         self.Upload_hyphen_Offset = Upload_hyphen_Offset
+                        self.Upload_hyphen_Expires = Upload_hyphen_Expires
                         self.PicTunnel_hyphen_Asset_hyphen_Id = PicTunnel_hyphen_Asset_hyphen_Id
                         self.PicTunnel_hyphen_Asset_hyphen_Created = PicTunnel_hyphen_Asset_hyphen_Created
                     }
@@ -2334,6 +2537,29 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The caller may not access this resource, or a cookie-authenticated state-changing request lacks a valid `X-CSRF-Token`. Code: `forbidden`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/patch(appendUpload)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            public var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
                             response: self
                         )
                     }
@@ -2432,6 +2658,52 @@ public enum Operations {
                     }
                 }
             }
+            /// `Tus-Resumable` is missing or unsupported. Code: `invalid_request`. `Tus-Version` lists the supported versions.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/patch(appendUpload)/responses/412`.
+            ///
+            /// HTTP response code: `412 preconditionFailed`.
+            case preconditionFailed(Components.Responses.PreconditionFailed)
+            /// The associated value of the enum case if `self` is `.preconditionFailed`.
+            ///
+            /// - Throws: An error if `self` is not `.preconditionFailed`.
+            /// - SeeAlso: `.preconditionFailed`.
+            public var preconditionFailed: Components.Responses.PreconditionFailed {
+                get throws {
+                    switch self {
+                    case let .preconditionFailed(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "preconditionFailed",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Codes: `file_too_large`, `quota_exceeded`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/patch(appendUpload)/responses/413`.
+            ///
+            /// HTTP response code: `413 contentTooLarge`.
+            case contentTooLarge(Components.Responses.PayloadTooLarge)
+            /// The associated value of the enum case if `self` is `.contentTooLarge`.
+            ///
+            /// - Throws: An error if `self` is not `.contentTooLarge`.
+            /// - SeeAlso: `.contentTooLarge`.
+            public var contentTooLarge: Components.Responses.PayloadTooLarge {
+                get throws {
+                    switch self {
+                    case let .contentTooLarge(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "contentTooLarge",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// Another request is writing to this upload. Code: `upload_locked`.
             ///
             /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/patch(appendUpload)/responses/423`.
@@ -2450,6 +2722,29 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "code423",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The app is older than `min_client_version`. Code: `client_too_old`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/patch(appendUpload)/responses/426`.
+            ///
+            /// HTTP response code: `426 upgradeRequired`.
+            case upgradeRequired(Components.Responses.UpgradeRequired)
+            /// The associated value of the enum case if `self` is `.upgradeRequired`.
+            ///
+            /// - Throws: An error if `self` is not `.upgradeRequired`.
+            /// - SeeAlso: `.upgradeRequired`.
+            public var upgradeRequired: Components.Responses.UpgradeRequired {
+                get throws {
+                    switch self {
+                    case let .upgradeRequired(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "upgradeRequired",
                             response: self
                         )
                     }
@@ -2693,6 +2988,29 @@ public enum Operations {
                     }
                 }
             }
+            /// The caller may not access this resource, or a cookie-authenticated state-changing request lacks a valid `X-CSRF-Token`. Code: `forbidden`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/delete(terminateUpload)/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            public var forbidden: Components.Responses.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// Not found, or not generated yet. Codes: `not_found`, `not_ready`.
             ///
             /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/delete(terminateUpload)/responses/404`.
@@ -2711,6 +3029,75 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// `Tus-Resumable` is missing or unsupported. Code: `invalid_request`. `Tus-Version` lists the supported versions.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/delete(terminateUpload)/responses/412`.
+            ///
+            /// HTTP response code: `412 preconditionFailed`.
+            case preconditionFailed(Components.Responses.PreconditionFailed)
+            /// The associated value of the enum case if `self` is `.preconditionFailed`.
+            ///
+            /// - Throws: An error if `self` is not `.preconditionFailed`.
+            /// - SeeAlso: `.preconditionFailed`.
+            public var preconditionFailed: Components.Responses.PreconditionFailed {
+                get throws {
+                    switch self {
+                    case let .preconditionFailed(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "preconditionFailed",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Another request is writing to this upload. Code: `upload_locked`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/delete(terminateUpload)/responses/423`.
+            ///
+            /// HTTP response code: `423 code423`.
+            case code423(Components.Responses.Locked)
+            /// The associated value of the enum case if `self` is `.code423`.
+            ///
+            /// - Throws: An error if `self` is not `.code423`.
+            /// - SeeAlso: `.code423`.
+            public var code423: Components.Responses.Locked {
+                get throws {
+                    switch self {
+                    case let .code423(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "code423",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The app is older than `min_client_version`. Code: `client_too_old`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/delete(terminateUpload)/responses/426`.
+            ///
+            /// HTTP response code: `426 upgradeRequired`.
+            case upgradeRequired(Components.Responses.UpgradeRequired)
+            /// The associated value of the enum case if `self` is `.upgradeRequired`.
+            ///
+            /// - Throws: An error if `self` is not `.upgradeRequired`.
+            /// - SeeAlso: `.upgradeRequired`.
+            public var upgradeRequired: Components.Responses.UpgradeRequired {
+                get throws {
+                    switch self {
+                    case let .upgradeRequired(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "upgradeRequired",
                             response: self
                         )
                     }
@@ -2767,12 +3154,29 @@ public enum Operations {
                 }
             }
             public var path: Operations.getUploadOffset.Input.Path
+            /// - Remark: Generated from `#/paths/api/v1/uploads/{upload_id}/HEAD/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.getUploadOffset.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.getUploadOffset.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.getUploadOffset.Input.Headers
             /// Creates a new `Input`.
             ///
             /// - Parameters:
             ///   - path:
-            public init(path: Operations.getUploadOffset.Input.Path) {
+            ///   - headers:
+            public init(
+                path: Operations.getUploadOffset.Input.Path,
+                headers: Operations.getUploadOffset.Input.Headers = .init()
+            ) {
                 self.path = path
+                self.headers = headers
             }
         }
         @frozen public enum Output: Sendable, Hashable {
@@ -2793,6 +3197,10 @@ public enum Operations {
                     ///
                     /// - Remark: Generated from `#/paths/api/v1/uploads/{upload_id}/HEAD/responses/200/headers/PicTunnel-Asset-Id`.
                     public var PicTunnel_hyphen_Asset_hyphen_Id: Components.Headers.AssetId?
+                    /// Always `no-store`.
+                    ///
+                    /// - Remark: Generated from `#/paths/api/v1/uploads/{upload_id}/HEAD/responses/200/headers/Cache-Control`.
+                    public var Cache_hyphen_Control: Swift.String?
                     /// Creates a new `Headers`.
                     ///
                     /// - Parameters:
@@ -2801,18 +3209,21 @@ public enum Operations {
                     ///   - Upload_hyphen_Length:
                     ///   - Upload_hyphen_Expires: HTTP-date after which the upload session expires.
                     ///   - PicTunnel_hyphen_Asset_hyphen_Id: Asset the upload resolved to.
+                    ///   - Cache_hyphen_Control: Always `no-store`.
                     public init(
                         Tus_hyphen_Resumable: Components.Headers.TusResumable? = nil,
                         Upload_hyphen_Offset: Components.Headers.UploadOffset? = nil,
                         Upload_hyphen_Length: Components.Headers.UploadLength? = nil,
                         Upload_hyphen_Expires: Components.Headers.UploadExpires? = nil,
-                        PicTunnel_hyphen_Asset_hyphen_Id: Components.Headers.AssetId? = nil
+                        PicTunnel_hyphen_Asset_hyphen_Id: Components.Headers.AssetId? = nil,
+                        Cache_hyphen_Control: Swift.String? = nil
                     ) {
                         self.Tus_hyphen_Resumable = Tus_hyphen_Resumable
                         self.Upload_hyphen_Offset = Upload_hyphen_Offset
                         self.Upload_hyphen_Length = Upload_hyphen_Length
                         self.Upload_hyphen_Expires = Upload_hyphen_Expires
                         self.PicTunnel_hyphen_Asset_hyphen_Id = PicTunnel_hyphen_Asset_hyphen_Id
+                        self.Cache_hyphen_Control = Cache_hyphen_Control
                     }
                 }
                 /// Received HTTP response headers
@@ -2918,10 +3329,128 @@ public enum Operations {
                     }
                 }
             }
+            /// `Tus-Resumable` is missing or unsupported. Code: `invalid_request`. `Tus-Version` lists the supported versions.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/head(getUploadOffset)/responses/412`.
+            ///
+            /// HTTP response code: `412 preconditionFailed`.
+            case preconditionFailed(Components.Responses.PreconditionFailed)
+            /// The associated value of the enum case if `self` is `.preconditionFailed`.
+            ///
+            /// - Throws: An error if `self` is not `.preconditionFailed`.
+            /// - SeeAlso: `.preconditionFailed`.
+            public var preconditionFailed: Components.Responses.PreconditionFailed {
+                get throws {
+                    switch self {
+                    case let .preconditionFailed(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "preconditionFailed",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Code423: Sendable, Hashable {
+                /// Creates a new `Code423`.
+                public init() {}
+            }
+            /// Another request holds the upload and the lock wait timed out. Code: `upload_locked` (no body on HEAD).
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/head(getUploadOffset)/responses/423`.
+            ///
+            /// HTTP response code: `423 code423`.
+            case code423(Operations.getUploadOffset.Output.Code423)
+            /// Another request holds the upload and the lock wait timed out. Code: `upload_locked` (no body on HEAD).
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/head(getUploadOffset)/responses/423`.
+            ///
+            /// HTTP response code: `423 code423`.
+            public static var code423: Self {
+                .code423(.init())
+            }
+            /// The associated value of the enum case if `self` is `.code423`.
+            ///
+            /// - Throws: An error if `self` is not `.code423`.
+            /// - SeeAlso: `.code423`.
+            public var code423: Operations.getUploadOffset.Output.Code423 {
+                get throws {
+                    switch self {
+                    case let .code423(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "code423",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct UpgradeRequired: Sendable, Hashable {
+                /// Creates a new `UpgradeRequired`.
+                public init() {}
+            }
+            /// The app is older than `min_client_version`. Code: `client_too_old` (no body on HEAD).
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/head(getUploadOffset)/responses/426`.
+            ///
+            /// HTTP response code: `426 upgradeRequired`.
+            case upgradeRequired(Operations.getUploadOffset.Output.UpgradeRequired)
+            /// The app is older than `min_client_version`. Code: `client_too_old` (no body on HEAD).
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/uploads/{upload_id}/head(getUploadOffset)/responses/426`.
+            ///
+            /// HTTP response code: `426 upgradeRequired`.
+            public static var upgradeRequired: Self {
+                .upgradeRequired(.init())
+            }
+            /// The associated value of the enum case if `self` is `.upgradeRequired`.
+            ///
+            /// - Throws: An error if `self` is not `.upgradeRequired`.
+            /// - SeeAlso: `.upgradeRequired`.
+            public var upgradeRequired: Operations.getUploadOffset.Output.UpgradeRequired {
+                get throws {
+                    switch self {
+                    case let .upgradeRequired(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "upgradeRequired",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// Undocumented response.
             ///
             /// A response with a code that is not documented in the OpenAPI document.
             case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case application_problem_plus_json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/problem+json":
+                    self = .application_problem_plus_json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .application_problem_plus_json:
+                    return "application/problem+json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .application_problem_plus_json
+                ]
+            }
         }
     }
     /// Remove a tombstone so the content can be backed up again
@@ -2974,13 +3503,13 @@ public enum Operations {
                 /// Creates a new `NoContent`.
                 public init() {}
             }
-            /// Removed.
+            /// Removed, or there was no tombstone for this content (idempotent).
             ///
             /// - Remark: Generated from `#/paths//api/v1/tombstones/{sha256}/delete(deleteTombstone)/responses/204`.
             ///
             /// HTTP response code: `204 noContent`.
             case noContent(Operations.deleteTombstone.Output.NoContent)
-            /// Removed.
+            /// Removed, or there was no tombstone for this content (idempotent).
             ///
             /// - Remark: Generated from `#/paths//api/v1/tombstones/{sha256}/delete(deleteTombstone)/responses/204`.
             ///
@@ -3000,6 +3529,29 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "noContent",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request is malformed. Codes: `invalid_request`, `cursor_required`, `pairing_code_invalid`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/tombstones/{sha256}/delete(deleteTombstone)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            public var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
                             response: self
                         )
                     }
@@ -3028,24 +3580,47 @@ public enum Operations {
                     }
                 }
             }
-            /// Not found, or not generated yet. Codes: `not_found`, `not_ready`.
+            /// The caller may not access this resource, or a cookie-authenticated state-changing request lacks a valid `X-CSRF-Token`. Code: `forbidden`.
             ///
-            /// - Remark: Generated from `#/paths//api/v1/tombstones/{sha256}/delete(deleteTombstone)/responses/404`.
+            /// - Remark: Generated from `#/paths//api/v1/tombstones/{sha256}/delete(deleteTombstone)/responses/403`.
             ///
-            /// HTTP response code: `404 notFound`.
-            case notFound(Components.Responses.NotFound)
-            /// The associated value of the enum case if `self` is `.notFound`.
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Components.Responses.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
             ///
-            /// - Throws: An error if `self` is not `.notFound`.
-            /// - SeeAlso: `.notFound`.
-            public var notFound: Components.Responses.NotFound {
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            public var forbidden: Components.Responses.Forbidden {
                 get throws {
                     switch self {
-                    case let .notFound(response):
+                    case let .forbidden(response):
                         return response
                     default:
                         try throwUnexpectedResponseStatus(
-                            expectedStatus: "notFound",
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The app is older than `min_client_version`. Code: `client_too_old`.
+            ///
+            /// - Remark: Generated from `#/paths//api/v1/tombstones/{sha256}/delete(deleteTombstone)/responses/426`.
+            ///
+            /// HTTP response code: `426 upgradeRequired`.
+            case upgradeRequired(Components.Responses.UpgradeRequired)
+            /// The associated value of the enum case if `self` is `.upgradeRequired`.
+            ///
+            /// - Throws: An error if `self` is not `.upgradeRequired`.
+            /// - SeeAlso: `.upgradeRequired`.
+            public var upgradeRequired: Components.Responses.UpgradeRequired {
+                get throws {
+                    switch self {
+                    case let .upgradeRequired(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "upgradeRequired",
                             response: self
                         )
                     }
