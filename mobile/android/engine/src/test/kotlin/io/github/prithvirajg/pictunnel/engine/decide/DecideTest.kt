@@ -31,6 +31,14 @@ class DecideTest {
     }
 
     @Test
+    fun bodylessHead404RestartsUpload() {
+        // A HEAD response never has a body, so an expired session is a bare 404 (P§7.3: restart with POST).
+        val g = Given("backup", "Uploading", "head_upload", mapOf("kind" to "photo", "has_upload_id" to true))
+        val s = ServerOutcome(404, emptyMap(), null, null)
+        assertEquals(Decision(ItemState.Queued, Action.RESTART_UPLOAD, 0), Decide.decide(g, s))
+    }
+
+    @Test
     fun headersAreCaseInsensitive() {
         val g = Given("backup", "Uploading", "head_upload", mapOf("has_upload_id" to true))
         val s = ServerOutcome(200, mapOf("picTunnel-asset-id" to "x"), null, null)

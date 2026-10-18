@@ -35,6 +35,10 @@ data class ItemEntity(
     val assetId: String?,
     val lastError: String?,
     val filename: String,
+    // Added in schema v2 for the phone timeline (PhoneItem); the scanner fills them when it knows them.
+    val width: Int? = null,
+    val height: Int? = null,
+    val durationMs: Long? = null,
 )
 
 /**

@@ -39,6 +39,9 @@ android {
         targetSdk = 36
     }
 
+    // Exported Room schemas are test assets for MigrationTestHelper.
+    sourceSets.getByName("test").assets.srcDir("$projectDir/schemas")
+
     testOptions {
         targetSdk = 36
         unitTests {
@@ -52,6 +55,12 @@ android {
                 it.maxHeapSize = "1g"
                 // Robolectric's SDK 36 runtime reaches into FileDescriptor internals on JDK 17+.
                 it.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
+                // ServerIntegrationTest runs against a real server binary when this is set.
+                System.getenv("PICTUNNEL_BIN")?.let { bin -> it.environment("PICTUNNEL_BIN", bin) }
+                it.testLogging {
+                    events("failed", "skipped")
+                    exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+                }
             }
         }
     }

@@ -68,6 +68,21 @@ class ServerClient(
     ): Outcome<List<CheckResult>> = checkApi.check(items, confirmOnDisk)
 
     /**
+     * `DELETE /tombstones/{sha256}` ("back up again", P§7.7). Returns the raw
+     * outcome; `204` removed it and `404` means there was none.
+     */
+    suspend fun deleteTombstone(sha256: String): ServerOutcome {
+        require(sha256.matches(SHA256_HEX)) { "not a lowercase sha256: $sha256" }
+        return send("$TOMBSTONES_PATH/$sha256") { Request.Builder().url(it).delete().build() }
+    }
+
+    /** Call on a network change: requests go back to the preferred (LAN-first) endpoint order (R9). */
+    fun onNetworkChanged() = endpoints.resetToPreferred()
+
+    /** The endpoint requests currently go to first. */
+    val activeEndpoint: String get() = endpoints.active.toString()
+
+    /**
      * Sends one request to [target] (a path or an absolute URL) and returns its
      * outcome; transport failures become transport outcomes. [build] must
      * create a fresh request (and body) each time: it runs again after a refresh.
@@ -124,5 +139,7 @@ class ServerClient(
 
     companion object {
         const val SERVER_INFO_PATH = "/api/v1/server/info"
+        const val TOMBSTONES_PATH = "/api/v1/tombstones"
+        private val SHA256_HEX = Regex("^[0-9a-f]{64}$")
     }
 }

@@ -67,6 +67,59 @@ interface ItemsDao {
 
     @Query("DELETE FROM items WHERE localId IN (:localIds)")
     suspend fun delete(localIds: List<String>): Int
+
+    /** Items in any of [states] that are due at [nowMs] (no backoff pending), newest first. */
+    @Query(
+        """
+        SELECT * FROM items
+        WHERE state IN (:states) AND (nextAttemptAtMs IS NULL OR nextAttemptAtMs <= :nowMs)
+        ORDER BY takenAtMs DESC, localId DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun due(
+        states: List<ItemState>,
+        nowMs: Long,
+        limit: Int,
+    ): List<ItemEntity>
+
+    /** The earliest pending backoff among [states], or null when nothing waits. */
+    @Query("SELECT MIN(nextAttemptAtMs) FROM items WHERE state IN (:states) AND nextAttemptAtMs > :nowMs")
+    suspend fun nextAttemptAfter(
+        states: List<ItemState>,
+        nowMs: Long,
+    ): Long?
+
+    @Query("SELECT COALESCE(SUM(size), 0) FROM items WHERE state = :state")
+    suspend fun sumSize(state: ItemState): Long
+
+    @Query("SELECT localId FROM items")
+    suspend fun allIds(): List<String>
+
+    @Query("SELECT * FROM items WHERE sha256 = :sha256")
+    suspend fun bySha(sha256: String): List<ItemEntity>
+
+    /**
+     * The phone timeline (M§3 `listPhoneItems`): primary items only (a Live
+     * Photo's paired video is a hidden component), newest first by
+     * `(takenAtMs, localId)`, strictly after the given key.
+     */
+    @Query(
+        """
+        SELECT * FROM items
+        WHERE pairRole = 'primary'
+          AND (:afterTakenAt IS NULL
+            OR takenAtMs < :afterTakenAt
+            OR (takenAtMs = :afterTakenAt AND localId < :afterLocalId))
+        ORDER BY takenAtMs DESC, localId DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun phonePage(
+        afterTakenAt: Long?,
+        afterLocalId: String?,
+        limit: Int,
+    ): List<ItemEntity>
 }
 
 @Dao
@@ -93,6 +146,9 @@ interface ScanStateDao {
 
     @Query("SELECT * FROM scan_state WHERE volume = :volume")
     suspend fun get(volume: String): ScanStateEntity?
+
+    @Query("SELECT * FROM scan_state")
+    suspend fun all(): List<ScanStateEntity>
 }
 
 @Dao
@@ -118,4 +174,7 @@ interface SettingsDao {
 
     @Query("SELECT * FROM settings")
     suspend fun all(): List<SettingEntity>
+
+    @Query("DELETE FROM settings WHERE key = :key")
+    suspend fun remove(key: String): Int
 }

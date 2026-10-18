@@ -214,6 +214,16 @@ tasks:
       - >-
         {{if eq .TOOLS_MODE "native"}}cd mobile && flutter pub get && flutter analyze && flutter test{{else}}{{.DOCKER_RUN}} -w /repo/mobile ghcr.io/cirruslabs/flutter:{{.FLUTTER_VERSION}} bash -c "flutter pub get && flutter analyze && flutter test"{{end}}
 
+  test:engine:android:
+    desc: Android engine unit tests plus the real-server integration tests (builds pictunnel for Linux first)
+    vars:
+      GRADLE_CMD: '{{.GRADLE_CMD | default "./gradlew"}}'
+    cmds:
+      - >-
+        {{if eq .TOOLS_MODE "native"}}cd server && CGO_ENABLED=0 GOOS=linux go build -o ../.cache/pictunnel ./cmd/pictunnel{{else}}{{.DOCKER_RUN}} -w /repo/server -e CGO_ENABLED=0 -e GOOS=linux -e GOCACHE=/tmp/gocache -e GOMODCACHE=/tmp/gomod golang:1.27 go build -o /repo/.cache/pictunnel ./cmd/pictunnel{{end}}
+      - >-
+        {{if eq .TOOLS_MODE "native"}}cd mobile && flutter pub get && cd android && PICTUNNEL_BIN="{{.ROOT_DIR}}/.cache/pictunnel" {{.GRADLE_CMD}} :engine:testDebugUnitTest --no-daemon{{else}}{{.DOCKER_RUN}} -w /repo/mobile -e PICTUNNEL_BIN=/repo/.cache/pictunnel ghcr.io/cirruslabs/flutter:{{.FLUTTER_VERSION}} bash -c "flutter pub get && cd android && {{.GRADLE_CMD}} :engine:testDebugUnitTest --no-daemon"{{end}}
+
   test:ml:
     desc: Lint and test the ML worker
     cmds:

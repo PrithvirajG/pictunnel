@@ -183,7 +183,7 @@ object Decide {
         ) = Decision(current, action, attempts)
         val needsAttention = Decision(ItemState.NeedsAttention, Action.MARK_NEEDS_ATTENTION, 0)
 
-        return when (problemCode(s.body)) {
+        return when (problemCode(s.body) ?: headCode(g, status)) {
             "invalid_request", "forbidden", "file_too_large" -> needsAttention
             "unauthorized", "token_expired" -> stay(Action.REFRESH_THEN_RETRY)
             "refresh_token_reused" -> Decision(ItemState.Paused, Action.REQUIRE_REPAIR, 0)
@@ -202,6 +202,16 @@ object Decide {
             else -> byStatus(s, status, current)
         }
     }
+
+    /**
+     * A HEAD response never carries a body, so its problem code is implied by
+     * the status: `404` is the expired or unknown session of P§7.3 (restart
+     * with POST).
+     */
+    private fun headCode(
+        g: Given,
+        status: Int,
+    ): String? = if (g.lastAction == LastAction.HEAD_UPLOAD && status == 404) "not_found" else null
 
     /** R7: an unknown or missing problem code falls back to the HTTP status. */
     private fun byStatus(

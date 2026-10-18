@@ -1,6 +1,7 @@
 package io.github.prithvirajg.pictunnel.engine.store
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -25,8 +26,10 @@ class Converters {
         ActivityEntity::class,
         SettingEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
+    // v2: nullable items.width/height/durationMs for the phone timeline.
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
 )
 @TypeConverters(Converters::class)
 abstract class EngineDb : RoomDatabase() {
