@@ -3,57 +3,16 @@ import Foundation
 import FoundationNetworking
 #endif
 
-/// The engine's HTTP transport: a URLSession plus the `PicTunnel-Client` header that every engine
-/// request carries (P§3 version gate, M§4.2).
-public struct EngineHTTP: @unchecked Sendable {
-    public static let clientHeaderName = "PicTunnel-Client"
-
-    public let session: URLSession
-    /// `ios/<app version>`.
-    public let clientHeader: String
-
-    public init(session: URLSession, clientHeader: String) {
-        self.session = session
-        self.clientHeader = clientHeader
-    }
-
-    public static func clientHeader(version: String) -> String { "ios/\(version)" }
-
-    /// A foreground session for JSON calls whose TLS goes through `pinning` (P§6.3). The client
-    /// header is also set on the configuration so tasks created elsewhere on it carry it too.
-    public static func makeSession(pinning: PinningDelegate?, clientHeader: String,
-                                   configuration: URLSessionConfiguration = .ephemeral) -> URLSession {
-        var extra = configuration.httpAdditionalHeaders ?? [:]
-        extra[clientHeaderName] = clientHeader
-        configuration.httpAdditionalHeaders = extra
-        return URLSession(configuration: configuration, delegate: pinning, delegateQueue: nil)
-    }
-
-    /// Sends one request; throws the transport error when there is no HTTP response.
-    public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        var req = request
-        req.setValue(clientHeader, forHTTPHeaderField: Self.clientHeaderName)
-        let session = self.session
-        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<(Data, HTTPURLResponse), Error>) in
-            session.dataTask(with: req) { data, response, error in
-                if let error {
-                    cont.resume(throwing: error)
-                } else if let http = response as? HTTPURLResponse {
-                    cont.resume(returning: (data ?? Data(), http))
-                } else {
-                    cont.resume(throwing: URLError(.badServerResponse))
-                }
-            }.resume()
-        }
-    }
-}
-
 /// `GET /api/v1/server/info` (P§11.1). Unknown fields are ignored.
 public struct ServerInfo: Decodable, Equatable, Sendable {
     public struct Upload: Decodable, Equatable, Sendable {
-        public var tusVersion: String
-        public var maxFileBytes: Int64
-        public var recommendedChunkBytes: Int64
+        public static let defaultChunkBytes: Int64 = 8_388_608
+
+        public var tusVersion: String = "1.0.0"
+        public var maxFileBytes: Int64?
+        public var recommendedChunkBytes: Int64 = Upload.defaultChunkBytes
+
+        public init() {}
 
         enum CodingKeys: String, CodingKey {
             case tusVersion = "tus_version"
@@ -63,16 +22,16 @@ public struct ServerInfo: Decodable, Equatable, Sendable {
 
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            tusVersion = try c.decodeIfPresent(String.self, forKey: .tusVersion) ?? "1.0.0"
-            maxFileBytes = try c.decode(Int64.self, forKey: .maxFileBytes)
-            recommendedChunkBytes = try c.decodeIfPresent(Int64.self, forKey: .recommendedChunkBytes) ?? 8_388_608
+            tusVersion = (try? c.decodeIfPresent(String.self, forKey: .tusVersion)) ?? "1.0.0"
+            maxFileBytes = try? c.decodeIfPresent(Int64.self, forKey: .maxFileBytes)
+            recommendedChunkBytes = (try? c.decodeIfPresent(Int64.self, forKey: .recommendedChunkBytes)) ?? Upload.defaultChunkBytes
         }
     }
 
     public var serverId: String
-    public var name: String
-    public var version: String
-    public var apiVersion: String
+    public var name: String?
+    public var version: String?
+    public var apiVersion: String?
     /// Per platform (`android`, `ios`, `web`).
     public var minClientVersion: [String: String]
     public var capabilities: [String]
@@ -93,13 +52,13 @@ public struct ServerInfo: Decodable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         serverId = try c.decode(String.self, forKey: .serverId)
-        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
-        version = try c.decodeIfPresent(String.self, forKey: .version) ?? ""
-        apiVersion = try c.decodeIfPresent(String.self, forKey: .apiVersion) ?? ""
-        minClientVersion = try c.decodeIfPresent([String: String].self, forKey: .minClientVersion) ?? [:]
-        capabilities = try c.decodeIfPresent([String].self, forKey: .capabilities) ?? []
-        upload = try c.decode(Upload.self, forKey: .upload)
-        time = try c.decodeIfPresent(String.self, forKey: .time)
+        name = try? c.decodeIfPresent(String.self, forKey: .name)
+        version = try? c.decodeIfPresent(String.self, forKey: .version)
+        apiVersion = try? c.decodeIfPresent(String.self, forKey: .apiVersion)
+        minClientVersion = (try? c.decodeIfPresent([String: String].self, forKey: .minClientVersion)) ?? [:]
+        capabilities = (try? c.decodeIfPresent([String].self, forKey: .capabilities)) ?? []
+        upload = (try? c.decodeIfPresent(Upload.self, forKey: .upload)) ?? Upload()
+        time = try? c.decodeIfPresent(String.self, forKey: .time)
     }
 }
 
@@ -130,12 +89,14 @@ public struct ServerClient: Sendable {
     }
 
     /// Sends an engine request built elsewhere (for example a tus HEAD, PATCH or DELETE from
-    /// `TusRequests`) with the bearer token. A URL on one of our endpoints, or a relative one, is
-    /// replayed through endpoint fallback; a foreign URL is sent as is.
+    /// `TusRequests`) with the bearer token, through endpoint fallback. The URL must be relative or
+    /// on one of the paired endpoints: the token is never sent to another host.
     public func perform(_ request: URLRequest) async -> Outcome<Data> {
         guard let url = request.url else { return .fail(ServerOutcome(transport: .reset)) }
-        let path = endpoints.relativize(url.absoluteString)
-        return await authorized(path: path, absolute: url) { target in
+        guard let path = endpoints.relativize(url.absoluteString) else {
+            return .fail(ServerOutcome(transport: .reset), .foreignHost(url.host ?? ""))
+        }
+        return await authorized(path: path) { target in
             var r = request
             r.url = target
             return r
@@ -150,8 +111,8 @@ public struct ServerClient: Sendable {
     ]))
 
     /// Runs one authorized request: on `401` it refreshes once (single-flight) and retries.
-    func authorized(path: String?, absolute: URL? = nil,
-                    _ build: (URL) -> URLRequest) async -> Outcome<Data> {
+    /// A `401 refresh_token_reused` is returned as is (refreshing cannot help).
+    func authorized(path: String, _ build: (URL) -> URLRequest) async -> Outcome<Data> {
         var retried = false
         while true {
             let token: String
@@ -171,19 +132,13 @@ public struct ServerClient: Sendable {
                     r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                     return r
                 }
-                if let path {
-                    (data, resp) = try await endpoints.execute(http, path: path, withAuth)
-                } else if let absolute {
-                    (data, resp) = try await http.send(withAuth(absolute))
-                } else {
-                    return .fail(ServerOutcome(transport: .reset))
-                }
+                (data, resp) = try await endpoints.execute(http, path: path, withAuth)
             } catch {
                 return .fail(ServerOutcome(error: error), Self.failure(error))
             }
 
             let raw = ServerOutcome(response: resp, data: data)
-            if resp.statusCode == 401, !retried {
+            if resp.statusCode == 401, !retried, raw.problem?.code != "refresh_token_reused" {
                 retried = true
                 switch await auth.onUnauthorized(failedToken: token) {
                 case .refreshed: continue
@@ -196,7 +151,7 @@ public struct ServerClient: Sendable {
     }
 
     static func failure(_ error: Error) -> NetFailure? {
-        if case let .allFailed(_, _, host?) = error as? EndpointsError { return .tlsRejected(host: host) }
+        if case let .allFailed(_, host?) = error as? EndpointsError { return .tlsRejected(host: host) }
         return nil
     }
 }

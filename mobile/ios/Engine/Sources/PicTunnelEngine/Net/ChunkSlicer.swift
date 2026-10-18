@@ -58,7 +58,12 @@ public struct ChunkSlicer: Sendable {
             throw error
         }
         try? fm.removeItem(at: target)
-        try fm.moveItem(at: partial, to: target)
+        do {
+            try fm.moveItem(at: partial, to: target)
+        } catch {
+            try? fm.removeItem(at: partial)
+            throw error
+        }
         return target
     }
 }

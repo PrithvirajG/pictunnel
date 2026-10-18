@@ -132,15 +132,20 @@ public enum Pinning {
 }
 
 /// The session delegate that enforces `Pinning` on every TLS handshake of the engine's sessions
-/// (M§4.4). A refused certificate cancels the challenge, so the request fails with
-/// `URLError.cancelled` before any request body is sent.
+/// (M§4.4). A refused certificate cancels the challenge, so the task fails before any request body
+/// is sent, and the refusal is recorded per task so `EngineHTTP` classifies it positively as a
+/// pin rejection rather than guessing from `URLError.cancelled`.
+///
+/// It implements the task-level challenge method only: URLSession then routes session-wide
+/// challenges (server trust) there too, with the task, which also works for background sessions.
 ///
 /// On Linux (no `Security`), FoundationNetworking does not expose server trust, so the delegate
 /// leaves the default handling in place; the Linux engine build is for tests only.
-public final class PinningDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+public final class PinningDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let pin: @Sendable () -> String?
     private let lock = NSLock()
     private var _rejectedHosts: [String] = []
+    private var rejectedTasks: [Int: String] = [:]
 
     /// `pin` is read on every handshake, so a re-pair takes effect without a new session.
     public init(pin: @escaping @Sendable () -> String?) {
@@ -158,8 +163,22 @@ public final class PinningDelegate: NSObject, URLSessionDelegate, @unchecked Sen
         return _rejectedHosts
     }
 
+    /// The host refused for this task, if any; the record is consumed.
+    public func takeRejection(taskIdentifier: Int) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return rejectedTasks.removeValue(forKey: taskIdentifier)
+    }
+
+    func recordRejection(taskIdentifier: Int, host: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        _rejectedHosts.append(host)
+        rejectedTasks[taskIdentifier] = host
+    }
+
     #if canImport(Security)
-    public func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+    public func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
                            completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         let space = challenge.protectionSpace
         guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust, let trust = space.serverTrust else {
@@ -169,9 +188,7 @@ public final class PinningDelegate: NSObject, URLSessionDelegate, @unchecked Sen
         if Pinning.evaluate(trust, host: space.host, pin: pin()) {
             completionHandler(.useCredential, URLCredential(trust: trust))
         } else {
-            lock.lock()
-            _rejectedHosts.append(space.host)
-            lock.unlock()
+            recordRejection(taskIdentifier: task.taskIdentifier, host: space.host)
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
     }

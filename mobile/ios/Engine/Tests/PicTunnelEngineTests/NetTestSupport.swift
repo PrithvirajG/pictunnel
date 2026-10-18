@@ -2,6 +2,11 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Darwin)
+import Darwin
+#endif
 import XCTest
 @testable import PicTunnelEngine
 
@@ -48,7 +53,8 @@ enum StubReply: Sendable {
 /// A `URLProtocol` that answers every request of a session built by `StubServer.session()` from
 /// the installed handler. Works with FoundationNetworking on Linux and Foundation on Apple platforms.
 final class StubProtocol: URLProtocol {
-    override class func canInit(with request: URLRequest) -> Bool { true }
+    /// Loopback requests go to the real network stack (see `SilentListener`).
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host != "127.0.0.1" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
@@ -64,6 +70,7 @@ final class StubProtocol: URLProtocol {
         nonisolated(unsafe) let proto = self
         DispatchQueue.global().async {
             let reply = StubServer.shared.handle(rec)
+            if proto.stopped { return } // cancelled meanwhile: answer nothing
             let client = proto.client
             switch reply {
             case let .error(code):
@@ -78,7 +85,19 @@ final class StubProtocol: URLProtocol {
         }
     }
 
-    override func stopLoading() {}
+    private let stopLock = NSLock()
+    private var _stopped = false
+    var stopped: Bool {
+        stopLock.lock()
+        defer { stopLock.unlock() }
+        return _stopped
+    }
+
+    override func stopLoading() {
+        stopLock.lock()
+        _stopped = true
+        stopLock.unlock()
+    }
 
     private static func body(of req: URLRequest) -> Data {
         if let b = req.httpBody { return b }
@@ -179,4 +198,77 @@ func sha256Hex(_ data: Data) -> String {
     var h = SHA256Stream()
     h.update(data)
     return h.finalizeHex()
+}
+
+/// Engine HTTP over the stub. Stubbed tasks carry no real connection metrics, so metrics are off
+/// and the error-code rule decides what was sent.
+func stubHTTP() -> EngineHTTP {
+    EngineHTTP(session: StubServer.session(), clientHeader: clientHeaderValue, useTaskMetrics: false)
+}
+
+/// A loopback TCP port that accepts connections into its backlog but never answers: an endpoint
+/// that never responds.
+final class SilentListener {
+    let port: UInt16
+    private let fd: Int32
+
+    init() throws {
+        #if canImport(Glibc)
+        let s = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
+        #else
+        let s = socket(AF_INET, SOCK_STREAM, 0)
+        #endif
+        guard s >= 0 else { throw POSIXError(.EIO) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        #if canImport(Darwin)
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        #endif
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(s, $0, len) }
+        }
+        guard bound == 0, listen(s, 16) == 0 else {
+            close(s)
+            throw POSIXError(.EADDRINUSE)
+        }
+        let named = withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(s, $0, &len) }
+        }
+        guard named == 0 else {
+            close(s)
+            throw POSIXError(.EIO)
+        }
+        fd = s
+        port = UInt16(bigEndian: addr.sin_port)
+    }
+
+    deinit { close(fd) }
+}
+
+/// A settable monotonic clock.
+final class ManualClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var t: TimeInterval = 1000
+    var now: TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        return t
+    }
+    func advance(_ by: TimeInterval) {
+        lock.lock()
+        t += by
+        lock.unlock()
+    }
+}
+
+/// A store whose reads fail (e.g. Keychain locked before first unlock).
+final class UnreadableStore: CredentialStore, @unchecked Sendable {
+    struct Locked: Error {}
+    var wipes = 0
+    func load() throws -> Credentials? { throw Locked() }
+    func save(_ c: Credentials) throws {}
+    func wipe() throws { wipes += 1 }
 }

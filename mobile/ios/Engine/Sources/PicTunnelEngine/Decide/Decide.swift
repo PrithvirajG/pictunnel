@@ -24,6 +24,10 @@ public enum Transport: String, Sendable {
     case timeout
     case reset
     case offline
+    /// TLS failed on every endpoint before anything was sent, most often a pin mismatch (P§6.3).
+    /// Not a vector value: like the Kotlin engine, `decide()` treats it as any non-offline
+    /// transport failure, and the controller surfaces it as a connection-level problem.
+    case tls
 }
 
 /// The item flags of a vector `given.item`.

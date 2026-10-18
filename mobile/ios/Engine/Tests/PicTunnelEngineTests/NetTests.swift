@@ -47,7 +47,7 @@ final class NetTests: XCTestCase {
         }
         let store = InMemoryCredentialStore(testCredentials(urls ?? [base]))
         let endpoints = Endpoints(store.creds!.endpoints)
-        let http = EngineHTTP(session: StubServer.session(), clientHeader: clientHeaderValue)
+        let http = stubHTTP()
         let auth = AuthManager(store: store, http: http, endpoints: endpoints)
         return Stack(api: ServerClient(endpoints: endpoints, auth: auth, http: http),
                      auth: auth, store: store, endpoints: endpoints, refreshes: refreshes)
@@ -217,7 +217,7 @@ final class NetTests: XCTestCase {
         }
         let store = InMemoryCredentialStore(testCredentials([base]))
         let endpoints = Endpoints([base])
-        let http = EngineHTTP(session: StubServer.session(), clientHeader: clientHeaderValue)
+        let http = stubHTTP()
         let auth = AuthManager(store: store, http: http, endpoints: endpoints)
         let api = ServerClient(endpoints: endpoints, auth: auth, http: http)
 
@@ -248,7 +248,7 @@ final class NetTests: XCTestCase {
         StubServer.shared.install { _ in .problem(401, "refresh_token_reused") }
         let store = InMemoryCredentialStore(testCredentials([base]))
         let repairs = Counter()
-        let auth = AuthManager(store: store, http: EngineHTTP(session: StubServer.session(), clientHeader: clientHeaderValue),
+        let auth = AuthManager(store: store, http: stubHTTP(),
                                endpoints: Endpoints([base]), onNeedsRepair: { repairs.next() })
 
         let out = await auth.onUnauthorized()
@@ -271,7 +271,7 @@ final class NetTests: XCTestCase {
 
         // The engine sees the same thing through ServerClient, mapped by decide() to require_repair.
         let api = ServerClient(endpoints: Endpoints([base]), auth: auth,
-                               http: EngineHTTP(session: StubServer.session(), clientHeader: clientHeaderValue))
+                               http: stubHTTP())
         let check = await api.check([CheckItem(sha256: "aa", sizeBytes: 1)])
         guard case let .fail(failRaw, failure) = check else { return XCTFail("expected fail") }
         XCTAssertEqual(failure, .needsRepair)
@@ -283,7 +283,7 @@ final class NetTests: XCTestCase {
     func testRefreshNetworkFailureKeepsTokens() async throws {
         StubServer.shared.install { _ in .error(.notConnectedToInternet) }
         let store = InMemoryCredentialStore(testCredentials([base]))
-        let auth = AuthManager(store: store, http: EngineHTTP(session: StubServer.session(), clientHeader: clientHeaderValue),
+        let auth = AuthManager(store: store, http: stubHTTP(),
                                endpoints: Endpoints([base]))
         let out = await auth.onUnauthorized()
         guard case let .transient(raw) = out else { return XCTFail("expected transient, got \(out)") }
@@ -302,7 +302,7 @@ final class NetTests: XCTestCase {
         }
         let endpoints = Endpoints([lan, remote])
         XCTAssertEqual(endpoints.active.host, "192.168.77.1", "LAN is preferred first")
-        let http = EngineHTTP(session: StubServer.session(), clientHeader: clientHeaderValue)
+        let http = stubHTTP()
 
         let (_, resp) = try await endpoints.execute(http, path: "/api/v1/server/info") { URLRequest(url: $0) }
         XCTAssertEqual(resp.statusCode, 200)
@@ -326,7 +326,7 @@ final class NetTests: XCTestCase {
     func testReachableLanIsUsedDirectly() async throws {
         StubServer.shared.install { _ in .json(200, "{}") }
         let endpoints = Endpoints(["https://192.168.77.1:8443", "https://photos.example.com"])
-        let http = EngineHTTP(session: StubServer.session(), clientHeader: clientHeaderValue)
+        let http = stubHTTP()
         _ = try await endpoints.execute(http, path: "/api/v1/sync/check") { URLRequest(url: $0) }
         _ = try await endpoints.execute(http, path: "/api/v1/sync/check") { URLRequest(url: $0) }
         let reqs = StubServer.shared.requests
@@ -339,7 +339,7 @@ final class NetTests: XCTestCase {
     func testAllUnreachableIsOffline() async throws {
         StubServer.shared.install { _ in .error(.cannotConnectToHost) }
         let endpoints = Endpoints(["https://192.168.77.1:8443", "https://photos.example.com"])
-        let http = EngineHTTP(session: StubServer.session(), clientHeader: clientHeaderValue)
+        let http = stubHTTP()
         do {
             _ = try await endpoints.execute(http, path: "/x") { URLRequest(url: $0) }
             XCTFail("expected an error")
@@ -355,7 +355,7 @@ final class NetTests: XCTestCase {
             return calls.next() <= 2 ? .json(200, "{}") : .error(.timedOut)
         }
         let endpoints = Endpoints(["https://192.168.77.1:8443", "https://photos.example.com"])
-        let http = EngineHTTP(session: StubServer.session(), clientHeader: clientHeaderValue)
+        let http = stubHTTP()
         _ = try await endpoints.execute(http, path: "/api/v1/sync/check") { URLRequest(url: $0) }
         do {
             _ = try await endpoints.execute(http, path: "/api/v1/sync/check") { URLRequest(url: $0) }
@@ -381,7 +381,145 @@ final class NetTests: XCTestCase {
         XCTAssertEqual(endpoints.relativize("https://192.168.1.10:8443/api/v1/uploads/x?a=1"), "/api/v1/uploads/x?a=1")
         XCTAssertEqual(endpoints.relativize("/api/v1/uploads/x"), "/api/v1/uploads/x")
         XCTAssertNil(endpoints.relativize("https://elsewhere.example/api/v1/uploads/x"))
+        XCTAssertEqual(endpoints.relativize("https://photos.example.com/api/v1/uploads/a%2Fb?x=%20y"),
+                       "/api/v1/uploads/a%2Fb?x=%20y", "percent-encoding is kept")
         XCTAssertEqual(endpoints.resolve("/api/v1/uploads/x")?.absoluteString, "https://192.168.1.10:8443/api/v1/uploads/x")
+    }
+
+    func testLanThatNeverAnswersFallsBackToRemoteWithinConnectBound() async throws {
+        // The LAN endpoint is a real loopback port that never answers (not stubbed).
+        let silent = try SilentListener()
+        StubServer.shared.install { _ in .json(200, "{}") }
+        let endpoints = Endpoints(["http://127.0.0.1:\(silent.port)", "https://photos.example.com"])
+        let started = Date()
+        let (_, resp) = try await endpoints.execute(stubHTTP(), path: "/api/v1/sync/check") { URLRequest(url: $0) }
+        let elapsed = Date().timeIntervalSince(started)
+        XCTAssertEqual(resp.statusCode, 200)
+        XCTAssertEqual(endpoints.active.host, "photos.example.com")
+        XCTAssertGreaterThanOrEqual(elapsed, 2.5, "the LAN got its 3 s")
+        XCTAssertLessThan(elapsed, 5, "but no more")
+        XCTAssertEqual(StubServer.shared.requests.map { $0.path }, ["/api/v1/sync/check"])
+    }
+
+    func testCancellationCancelsRequestAndNeverFallsBack() async throws {
+        StubServer.shared.install { r in
+            if r.url.host == "first.example" {
+                Thread.sleep(forTimeInterval: 1.5)
+                return .error(.cannotConnectToHost) // would be a fallback reason if not cancelled
+            }
+            return .json(200, "{}")
+        }
+        let endpoints = Endpoints(["https://first.example", "https://second.example"])
+        let http = stubHTTP()
+        let started = Date()
+        let task = Task { try await endpoints.execute(http, path: "/api/v1/sync/check") { URLRequest(url: $0) } }
+        while StubServer.shared.requests.isEmpty, Date().timeIntervalSince(started) < 2 {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        task.cancel()
+        let result = await task.result
+        let elapsed = Date().timeIntervalSince(started)
+        guard case let .failure(error) = result else { return XCTFail("expected a failure") }
+        XCTAssertLessThan(elapsed, 1.4, "the request was cancelled, not waited out")
+        XCTAssertEqual(Transport.classify(error), .reset)
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        XCTAssertFalse(StubServer.shared.requests.contains { $0.url.host == "second.example" },
+                       "a cancelled request is never replayed on another endpoint")
+    }
+
+    func testTlsFailureOnEveryEndpointIsTls() async throws {
+        StubServer.shared.install { r in
+            r.url.host == "192.168.77.1" ? .error(.serverCertificateUntrusted) : .error(.cannotConnectToHost)
+        }
+        let endpoints = Endpoints(["https://192.168.77.1:8443", "https://photos.example.com"])
+        do {
+            _ = try await endpoints.execute(stubHTTP(), path: "/x") { URLRequest(url: $0) }
+            XCTFail("expected an error")
+        } catch {
+            XCTAssertEqual(Transport.classify(error), .tls, "mixed tls + unreachable is tls")
+            XCTAssertEqual(ServerClient.failure(error), .tlsRejected(host: "192.168.77.1"))
+        }
+        // Pin rejection is classified from the delegate's per-task record, not URLError.cancelled.
+        XCTAssertEqual(Transport.classify(TransportFailure(code: .cancelled, pinRejectedHost: "h")), .tls)
+        XCTAssertTrue(TransportFailure(code: .cancelled, pinRejectedHost: "h").provablyUnsent)
+        XCTAssertFalse(TransportFailure(code: .cancelled).provablyUnsent)
+        XCTAssertFalse(TransportFailure(code: .cannotConnectToHost, cancelled: true).provablyUnsent)
+        // Metrics decide when present.
+        XCTAssertTrue(TransportFailure(code: .timedOut, sent: false).provablyUnsent, "LAN connect timeout")
+        XCTAssertFalse(TransportFailure(code: .networkConnectionLost, sent: true).provablyUnsent)
+        XCTAssertEqual(Transport.classify(TransportFailure(code: .secureConnectionFailed, sent: true)), .reset,
+                       "an SSL error after the request left is ambiguous")
+        // decide() treats tls like any non-offline transport failure (as the Kotlin engine does).
+        let tls = ServerOutcome(transport: .tls)
+        XCTAssertEqual(Decide.decide(Given(flow: .backup, itemState: .hashed, lastAction: .check), tls),
+                       Decision(nextState: .hashed, action: .backoffRetry, attemptsDelta: 1))
+        XCTAssertEqual(Decide.decide(Given(flow: .auth, itemState: nil, lastAction: .refresh), tls).action, .backoffRetry)
+    }
+
+    func testAccessTokenRefreshedProactively() async throws {
+        let refreshes = Counter()
+        StubServer.shared.install { _ in .json(200, tokensJSON(refreshes.next())) }
+        let clock = ManualClock()
+        let auth = AuthManager(store: InMemoryCredentialStore(testCredentials([base])), http: stubHTTP(),
+                               endpoints: Endpoints([base]), uptime: { clock.now })
+        let first = try await auth.accessToken()
+        XCTAssertEqual(first, "pt_at_1")
+        clock.advance(13 * 60)
+        let second = try await auth.accessToken()
+        XCTAssertEqual(second, "pt_at_1", "still fresh")
+        XCTAssertEqual(refreshes.value, 1)
+        clock.advance(60)
+        let third = try await auth.accessToken()
+        XCTAssertEqual(third, "pt_at_2", "14 min after issue it is refreshed before use")
+        XCTAssertEqual(refreshes.value, 2)
+    }
+
+    func testCredentialReadErrorIsTransientNotRepair() async throws {
+        StubServer.shared.install { _ in .json(200, tokensJSON(1)) }
+        let store = UnreadableStore()
+        let repairs = Counter()
+        let auth = AuthManager(store: store, http: stubHTTP(), endpoints: Endpoints([base]),
+                               onNeedsRepair: { repairs.next() })
+        let out = await auth.onUnauthorized()
+        XCTAssertEqual(out, .transient(ServerOutcome(transport: .reset)))
+        XCTAssertEqual(store.wipes, 0)
+        XCTAssertEqual(repairs.value, 0)
+        XCTAssertTrue(StubServer.shared.requests.isEmpty)
+
+        let missing = AuthManager(store: InMemoryCredentialStore(nil), http: stubHTTP(), endpoints: Endpoints([base]))
+        let none = await missing.onUnauthorized()
+        XCTAssertEqual(none, .needsRepair(nil), "nothing stored means pair again")
+    }
+
+    func testRefreshTokenReused401IsNotRefreshed() async throws {
+        let s = stack { _ in .problem(401, "refresh_token_reused") }
+        let out = await s.api.check([CheckItem(sha256: "x", sizeBytes: 1)])
+        guard case let .fail(raw, _) = out else { return XCTFail("expected fail") }
+        XCTAssertEqual(raw.problem?.code, "refresh_token_reused")
+        XCTAssertEqual(s.refreshes.value, 1, "only the initial token; refreshing cannot help")
+    }
+
+    func testForeignHostNeverGetsTheToken() async throws {
+        let s = stack { _ in .empty(204) }
+        let out = await s.api.perform(TusRequests.terminate(URL(string: "https://evil.example/api/v1/uploads/x")!))
+        guard case let .fail(_, failure) = out else { return XCTFail("expected fail") }
+        XCTAssertEqual(failure, .foreignHost("evil.example"))
+        XCTAssertFalse(StubServer.shared.requests.contains { $0.url.host == "evil.example" })
+    }
+
+    func testLenientServerInfoAndProblem() throws {
+        let info = try JSONDecoder().decode(ServerInfo.self, from: Data(#"{"server_id":"s","upload":{"tus_version":7}}"#.utf8))
+        XCTAssertEqual(info.serverId, "s")
+        XCTAssertNil(info.name)
+        XCTAssertNil(info.upload.maxFileBytes)
+        XCTAssertEqual(info.upload.recommendedChunkBytes, 8_388_608)
+        XCTAssertEqual(info.upload.tusVersion, "1.0.0")
+        XCTAssertEqual(info.capabilities, [])
+        let bare = try JSONDecoder().decode(ServerInfo.self, from: Data(#"{"server_id":"s"}"#.utf8))
+        XCTAssertEqual(bare.upload.recommendedChunkBytes, 8_388_608)
+
+        XCTAssertEqual(Problem(.object(["title": .string("Bad Gateway")]))?.title, "Bad Gateway")
+        XCTAssertNil(Problem(.object(["detail": .string("x")])))
     }
 
     // MARK: - client

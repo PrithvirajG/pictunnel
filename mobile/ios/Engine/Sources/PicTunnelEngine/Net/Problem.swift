@@ -23,12 +23,13 @@ public struct Problem: Equatable, Sendable {
         self.requestId = requestId
     }
 
-    /// Parses a problem out of a JSON body; nil unless the body is an object with a `code` or `type`.
+    /// Parses a problem out of a JSON body; nil unless the body is an object with a `code`, `type`
+    /// or `title` (as lenient as the Kotlin engine).
     public init?(_ body: JSONValue?) {
         guard let body, case .object = body else { return nil }
         let code = body["code"]?.stringValue
         let type = body["type"]?.stringValue
-        guard code != nil || type != nil else { return nil }
+        guard code != nil || type != nil || body["title"]?.stringValue != nil else { return nil }
         self.init(type: type, title: body["title"]?.stringValue, status: body["status"]?.intValue,
                   detail: body["detail"]?.stringValue,
                   code: code ?? type.flatMap { $0.hasPrefix(Self.typePrefix) ? String($0.dropFirst(Self.typePrefix.count)) : nil },
@@ -65,6 +66,9 @@ public enum NetFailure: Error, Equatable, Sendable {
     /// No endpoint answered, and at least one refused TLS: the certificate is neither trusted by the
     /// system for the host nor matching the stored pin (P§6.3). Shown as "server identity changed".
     case tlsRejected(host: String)
+    /// The request targets a host that is not one of the paired endpoints; it was not sent, so the
+    /// bearer token never leaves the paired server.
+    case foreignHost(String)
 }
 
 /// A non-2xx answer from a call that has no `Outcome` (server info).
@@ -136,24 +140,25 @@ enum HTTPDate {
 }
 
 extension Transport {
-    /// Classifies a failed request (P§10.5): no network at all is `offline` (never an attempt, R5),
-    /// a timeout is `timeout`, anything else that dropped the exchange is `reset`.
+    /// Classifies a failed request (P§10.5), like the Kotlin engine:
+    /// - every endpoint failed before sending: `tls` if any refused TLS, else `offline` (never an
+    ///   attempt, R5);
+    /// - a handshake or pin failure on its own: `tls`;
+    /// - a timeout: `timeout`; anything else after the request may have left: `reset`.
     public static func classify(_ error: Error) -> Transport {
-        if let e = error as? EndpointsError {
+        switch error {
+        case let e as EndpointsError:
             switch e {
-            case let .allFailed(last, onlyUnreachable, _):
-                return onlyUnreachable ? .offline : classify(last)
-            case .noEndpoints:
-                return .offline
+            case let .allFailed(_, tlsHost): return tlsHost != nil ? .tls : .offline
+            case .noEndpoints: return .offline
             }
-        }
-        guard let u = error as? URLError else { return .reset }
-        switch u.code {
-        case .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
-             .internationalRoamingOff, .dataNotAllowed, .callIsActive:
-            return .offline
-        case .timedOut:
-            return .timeout
+        case let f as TransportFailure:
+            if f.isTLS { return .tls }
+            if f.code == .timedOut { return .timeout }
+            if f.sent != true, TransportFailure.preSendCodes.contains(f.code) { return .offline }
+            return .reset
+        case let u as URLError:
+            return classify(TransportFailure(code: u.code))
         default:
             return .reset
         }

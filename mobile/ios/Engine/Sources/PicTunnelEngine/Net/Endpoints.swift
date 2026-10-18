@@ -5,23 +5,25 @@ import FoundationNetworking
 
 public enum EndpointsError: Error, Sendable {
     case noEndpoints
-    /// Every endpoint failed. `onlyUnreachable` is true when none of them was reached at all
-    /// (so the device is effectively offline); `tlsRejectedHost` names an endpoint that refused
-    /// TLS under the pinning rule.
-    case allFailed(last: Error, onlyUnreachable: Bool, tlsRejectedHost: String?)
+    /// Every endpoint failed before anything was sent. `tlsRejectedHost` names an endpoint whose
+    /// TLS handshake failed or whose certificate the pinning rule refused.
+    case allFailed(last: Error, tlsRejectedHost: String?)
 }
 
 /// The server's endpoints in stored order, LAN first (R9, M§4.4).
 ///
-/// A request goes to the active endpoint first, then to the others in stored order. Before a LAN
-/// endpoint is used for the first time since the last network change, a `GET /healthz` with a 3 s
-/// timeout checks that it is reachable; this is the iOS stand-in for OkHttp's connect timeout
-/// (URLSession has no separate connect timeout) and keeps the real request on the normal timeout.
-/// The probe also completes the TLS handshake, so pinning runs before any request body is sent.
+/// A request goes to the active endpoint first, then to the others in stored order, falling back
+/// on any failure where the request provably never reached the server (`TransportFailure
+/// .provablyUnsent`: task metrics show no request start, the pin was rejected, or without metrics
+/// an error that can only happen before sending). Once a request may have reached the server its
+/// failure is returned as is, so an ambiguous upload is resolved by HEAD or check (R2) and never
+/// re-sent elsewhere. A cancelled request is never replayed.
 ///
-/// Falling back to the next endpoint happens only when the request surely never reached the
-/// server (no route, DNS, refused, TLS rejected). A timeout or a dropped connection on a reached
-/// endpoint is ambiguous (R2) and is returned to the caller instead of being replayed elsewhere.
+/// LAN connect is bounded to 3 s: URLSession has no separate connect timeout, so before a LAN
+/// endpoint is used for the first time since it last answered, a `GET /healthz` with a 3 s timeout
+/// checks it is reachable (this also runs the TLS handshake and pinning before any body is sent).
+/// The real request then keeps its normal timeout. Any failure on a LAN endpoint forgets it, so the
+/// next request probes again.
 public final class Endpoints: @unchecked Sendable {
     public static let lanConnectTimeout: TimeInterval = 3
     public static let probePath = "/healthz"
@@ -29,7 +31,7 @@ public final class Endpoints: @unchecked Sendable {
     public let urls: [URL]
     private let lock = NSLock()
     private var activeIndex = 0
-    /// Endpoints that answered since the last network change.
+    /// Endpoints that answered since they last failed or the network changed.
     private var reached = Set<Int>()
 
     public init(_ endpoints: [String]) {
@@ -45,7 +47,7 @@ public final class Endpoints: @unchecked Sendable {
     public var active: URL {
         lock.lock()
         defer { lock.unlock() }
-        return urls.isEmpty ? URL(string: "https://invalid.invalid")! : urls[activeIndex]
+        return urls.isEmpty ? URL(fileURLWithPath: "/") : urls[activeIndex]
     }
 
     /// Back to stored order, e.g. after a network change: the LAN gets another chance.
@@ -61,18 +63,19 @@ public final class Endpoints: @unchecked Sendable {
         URL(string: location, relativeTo: active)?.absoluteURL
     }
 
-    /// The path and query of `target` when it is relative or points at one of our endpoints, so it
-    /// can be replayed on whichever endpoint is active; nil for a foreign host.
+    /// The percent-encoded path and query of `target` when it is relative or points at one of our
+    /// endpoints, so it can be replayed on whichever endpoint is active; nil for a foreign host,
+    /// which never gets the bearer token.
     public func relativize(_ target: String) -> String? {
         if target.hasPrefix("/") { return target }
-        guard let u = URL(string: target), let host = u.host else { return nil }
+        guard let c = URLComponents(string: target), let host = c.host else { return nil }
         let match = urls.contains { e in
-            e.scheme?.lowercased() == u.scheme?.lowercased() && e.host?.lowercased() == host.lowercased()
-                && Self.port(e) == Self.port(u)
+            e.scheme?.lowercased() == c.scheme?.lowercased() && e.host?.lowercased() == host.lowercased()
+                && Self.port(e) == Self.port(scheme: c.scheme, port: c.port)
         }
         guard match else { return nil }
-        let path = u.path.isEmpty ? "/" : u.path
-        return u.query.map { "\(path)?\($0)" } ?? path
+        let path = c.percentEncodedPath.isEmpty ? "/" : c.percentEncodedPath
+        return c.percentEncodedQuery.map { "\(path)?\($0)" } ?? path
     }
 
     /// Sends `build(endpoint + path)` to the active endpoint, falling back through the others.
@@ -82,43 +85,49 @@ public final class Endpoints: @unchecked Sendable {
         let (order, alreadyReached) = snapshot()
         guard !order.isEmpty else { throw EndpointsError.noEndpoints }
 
-        var last: Error = URLError(.cannotConnectToHost)
-        var onlyUnreachable = true
+        var last: Error = TransportFailure(code: .cannotConnectToHost, sent: false)
         var tlsHost: String?
-        func note(_ error: Error, host: String, unreachable: Bool) {
+        func note(_ error: Error, host: String) {
             last = error
-            if !unreachable { onlyUnreachable = false }
-            if Self.isTLSRejection(error) {
-                tlsHost = tlsHost ?? host
-                onlyUnreachable = false
-            }
+            if let f = error as? TransportFailure, f.isTLS { tlsHost = tlsHost ?? f.pinRejectedHost ?? host }
         }
 
         for i in order {
+            try Task.checkCancellation()
             let base = urls[i]
             let host = base.host ?? ""
-            if !alreadyReached.contains(i), Self.isLan(host) {
-                var probe = URLRequest(url: Self.join(base, Self.probePath))
+            let lan = Self.isLan(host)
+            if lan, !alreadyReached.contains(i) {
+                guard let probeURL = Self.join(base, Self.probePath) else { continue }
+                var probe = URLRequest(url: probeURL)
                 probe.timeoutInterval = Self.lanConnectTimeout
                 do {
                     _ = try await http.send(probe)
                     markReached(i)
                 } catch {
-                    note(error, host: host, unreachable: true)
+                    if Self.isCancellation(error) { throw error }
+                    note(error, host: host)
                     continue
                 }
             }
+            guard let url = Self.join(base, path) else { throw TransportFailure(code: .badURL, sent: false) }
             do {
-                let result = try await http.send(build(Self.join(base, path)))
+                let result = try await http.send(build(url))
                 markReached(i, active: true)
                 return result
             } catch {
-                guard Self.isUnsent(error) else { throw error }
                 forget(i)
-                note(error, host: host, unreachable: true)
+                if Self.isCancellation(error) { throw error }
+                guard let f = error as? TransportFailure, f.provablyUnsent else { throw error }
+                note(error, host: host)
             }
         }
-        throw EndpointsError.allFailed(last: last, onlyUnreachable: onlyUnreachable, tlsRejectedHost: tlsHost)
+        throw EndpointsError.allFailed(last: last, tlsRejectedHost: tlsHost)
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError || Task.isCancelled { return true }
+        return (error as? TransportFailure)?.cancelled == true
     }
 
     // MARK: - classification
@@ -149,33 +158,6 @@ public final class Endpoints: @unchecked Sendable {
         return (v & 0xFE00) == 0xFC00 /* fc00::/7 */ || (v & 0xFFC0) == 0xFE80 /* fe80::/10 */
     }
 
-    /// Errors raised before the request could have reached the server.
-    static func isUnsent(_ error: Error) -> Bool {
-        guard let u = error as? URLError else { return false }
-        switch u.code {
-        case .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
-             .internationalRoamingOff, .dataNotAllowed, .callIsActive,
-             .appTransportSecurityRequiresSecureConnection:
-            return true
-        default:
-            return isTLSRejection(error)
-        }
-    }
-
-    /// The handshake failed or the pinning delegate refused the certificate (which URLSession
-    /// reports as `cancelled`).
-    static func isTLSRejection(_ error: Error) -> Bool {
-        guard let u = error as? URLError else { return false }
-        switch u.code {
-        case .cancelled, .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted,
-             .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid, .clientCertificateRejected,
-             .clientCertificateRequired:
-            return true
-        default:
-            return false
-        }
-    }
-
     // MARK: - state
 
     private func snapshot() -> ([Int], Set<Int>) {
@@ -199,13 +181,17 @@ public final class Endpoints: @unchecked Sendable {
         reached.remove(i)
     }
 
-    static func join(_ base: URL, _ path: String) -> URL {
-        URL(string: base.absoluteString + (path.hasPrefix("/") ? path : "/" + path))!
+    static func join(_ base: URL, _ path: String) -> URL? {
+        URL(string: base.absoluteString + (path.hasPrefix("/") ? path : "/" + path))
     }
 
     private static func port(_ u: URL) -> Int? {
-        if let p = u.port { return p }
-        switch u.scheme?.lowercased() {
+        port(scheme: u.scheme, port: u.port)
+    }
+
+    private static func port(scheme: String?, port: Int?) -> Int? {
+        if let port { return port }
+        switch scheme?.lowercased() {
         case "https": return 443
         case "http": return 80
         default: return nil

@@ -49,7 +49,7 @@ public enum TusRequests {
     /// `POST /api/v1/uploads`: creation, or creation-with-upload when `bodyFile` is set (single
     /// shot ≤ 64 MiB on iOS; the body is the file, attached by the upload task).
     public static func create(base: URL, meta: UploadMeta, length: Int64, bodyFile: URL?) -> URLRequest {
-        var r = URLRequest(url: Endpoints.join(base, uploadsPath))
+        var r = URLRequest(url: Endpoints.join(base, uploadsPath) ?? base.appendingPathComponent("api/v1/uploads"))
         r.httpMethod = "POST"
         r.setValue(tusVersion, forHTTPHeaderField: "Tus-Resumable")
         r.setValue(String(length), forHTTPHeaderField: "Upload-Length")

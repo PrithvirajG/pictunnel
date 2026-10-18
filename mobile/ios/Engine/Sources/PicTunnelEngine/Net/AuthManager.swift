@@ -30,14 +30,22 @@ public actor AuthManager {
     private let endpoints: Endpoints
     private var onNeedsRepair: (@Sendable () -> Void)?
 
+    /// Monotonic seconds (default `ProcessInfo.systemUptime`); only schedules the proactive
+    /// refresh, so correctness never depends on the device clock (R10).
+    private let uptime: @Sendable () -> TimeInterval
+
     private var token: String?
+    /// The uptime after which `token` is refreshed before use.
+    private var validUntil: TimeInterval = 0
     private var inflight: Task<RefreshOutcome, Never>?
     /// A rotated refresh token the store failed to persist; used until a save succeeds, so the
     /// next refresh never presents the stale one (which would count as reuse after 30 s).
     private var unsavedRefreshToken: String?
 
     public init(store: CredentialStore, http: EngineHTTP, endpoints: Endpoints,
-                onNeedsRepair: (@Sendable () -> Void)? = nil) {
+                onNeedsRepair: (@Sendable () -> Void)? = nil,
+                uptime: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.uptime = uptime
         self.store = store
         self.http = http
         self.endpoints = endpoints
@@ -48,13 +56,16 @@ public actor AuthManager {
         onNeedsRepair = handler
     }
 
-    /// The cached access token, refreshing first when there is none.
+    /// Access tokens live 15 min (P§6.1); refresh a minute early, like the Kotlin engine.
+    public static let refreshAfter: TimeInterval = 14 * 60
+
+    /// A valid access token, refreshing first when there is none or it is about to expire.
     public func accessToken() async throws -> String {
-        if let token { return token }
-        switch await refresh() {
+        if let token, uptime() < validUntil { return token }
+        switch await refresh(stale: token) {
         case .refreshed:
             if let token { return token }
-            return try await accessToken()
+            throw AuthError.transient(ServerOutcome(transport: .reset))
         case .needsRepair:
             throw AuthError.needsRepair
         case let .transient(raw):
@@ -62,20 +73,23 @@ public actor AuthManager {
         }
     }
 
-    /// Call after a `401` on a request sent with `failedToken`.
+    /// Call after a `401` on a request sent with `failedToken`. If another caller already replaced
+    /// that token, no second refresh happens. Without it the current token is assumed stale.
     public func onUnauthorized(failedToken: String? = nil) async -> RefreshOutcome {
-        if let failedToken, let token, token != failedToken { return .refreshed }
-        if failedToken != nil, token == failedToken { token = nil }
-        return await refresh()
+        await refresh(stale: failedToken ?? token)
     }
 
     /// Forgets the access token (for example after re-pairing).
     public func reset() {
         token = nil
+        validUntil = 0
         unsavedRefreshToken = nil
     }
 
-    private func refresh() async -> RefreshOutcome {
+    /// Single flight: callers join the refresh in flight, and a caller whose token was already
+    /// replaced by a still-valid one gets `.refreshed` without a request.
+    private func refresh(stale: String?) async -> RefreshOutcome {
+        if let token, token != stale, uptime() < validUntil { return .refreshed }
         if let inflight { return await inflight.value }
         let task = Task { await self.performRefresh() }
         inflight = task
@@ -84,8 +98,17 @@ public actor AuthManager {
 
     private func performRefresh() async -> RefreshOutcome {
         defer { inflight = nil }
-        guard var creds = try? store.load() else {
+        let loaded: Credentials?
+        do {
+            loaded = try store.load()
+        } catch {
+            // Unreadable (e.g. Keychain locked before first unlock) is not "gone": keep everything.
+            return .transient(ServerOutcome(transport: .reset))
+        }
+        guard var creds = loaded else {
+            // Nothing stored: already wiped or never paired; do not wipe or notify again.
             token = nil
+            validUntil = 0
             return .needsRepair(nil)
         }
         let presented = unsavedRefreshToken ?? creds.refreshToken
@@ -127,6 +150,7 @@ public actor AuthManager {
                 unsavedRefreshToken = pair.refreshToken
             }
             token = pair.accessToken
+            validUntil = uptime() + Self.refreshAfter
             return .refreshed
         }
 
@@ -134,6 +158,7 @@ public actor AuthManager {
         if decision.action == .requireRepair {
             try? store.wipe()
             token = nil
+            validUntil = 0
             unsavedRefreshToken = nil
             onNeedsRepair?()
             return .needsRepair(raw)
