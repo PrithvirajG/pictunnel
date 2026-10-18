@@ -2,13 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/engine/engine.dart';
+import '../features/pairing/manual_server_screen.dart';
+import '../features/pairing/pair_screen.dart';
 import 'shell.dart';
 import 'theme/tokens.dart';
 import 'theme/typography.dart';
 
 /// Whether the engine has a paired server (`engine.serverInfo() != null`).
-/// Later tasks override this with the real engine-backed provider.
-final serverConnectedProvider = FutureProvider<bool>((ref) async => false);
+/// Re-evaluates when the engine reports `needsRepair` (credentials wiped) and
+/// is invalidated after a successful pairing.
+final serverConnectedProvider = FutureProvider<bool>((ref) async {
+  final engine = ref.watch(engineProvider);
+  final sub = engine.needsRepair$.listen((_) => ref.invalidateSelf());
+  ref.onDispose(sub.cancel);
+  return await engine.serverInfo() != null;
+});
 
 final routerProvider = Provider<GoRouter>((ref) {
   final router = buildRouter(ref);
@@ -27,7 +36,7 @@ GoRouter buildRouter(Ref ref) {
     redirect: (context, state) {
       final connected = ref.read(serverConnectedProvider).value;
       if (connected == null) return null; // still resolving
-      final atPair = state.matchedLocation == '/pair';
+      final atPair = state.matchedLocation.startsWith('/pair');
       if (!connected && !atPair) return '/pair';
       if (connected && atPair) return '/photos';
       return null;
@@ -35,7 +44,13 @@ GoRouter buildRouter(Ref ref) {
     routes: [
       GoRoute(
         path: '/pair',
-        builder: (_, _) => const PlaceholderScreen('Pair'),
+        builder: (_, _) => const PairScreen(),
+        routes: [
+          GoRoute(
+            path: 'manual',
+            builder: (_, _) => const ManualServerScreen(),
+          ),
+        ],
       ),
       StatefulShellRoute.indexedStack(
         builder: (_, _, shell) => AppShell(navigationShell: shell),
