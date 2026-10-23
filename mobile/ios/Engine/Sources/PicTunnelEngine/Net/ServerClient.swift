@@ -119,7 +119,7 @@ public struct ServerClient: Sendable {
             do {
                 token = try await auth.accessToken()
             } catch let AuthError.transient(raw) {
-                return .fail(raw)
+                return .fail(raw, .refreshFailed)
             } catch {
                 return .fail(Self.repairOutcome, .needsRepair)
             }
@@ -143,7 +143,7 @@ public struct ServerClient: Sendable {
                 switch await auth.onUnauthorized(failedToken: token) {
                 case .refreshed: continue
                 case let .needsRepair(r): return .fail(r ?? Self.repairOutcome, .needsRepair)
-                case let .transient(r): return .fail(r)
+                case let .transient(r): return .fail(r, .refreshFailed)
                 }
             }
             return raw.isSuccess ? .ok(data, raw: raw) : .fail(raw)
@@ -154,4 +154,19 @@ public struct ServerClient: Sendable {
         if case let .allFailed(_, host?) = error as? EndpointsError { return .tlsRejected(host: host) }
         return nil
     }
+}
+
+extension ServerClient {
+    /// `DELETE /api/v1/tombstones/{sha256}`: "back up again" (P§7.7). `204` removed it; `404` means
+    /// there was none.
+    public func deleteTombstone(_ sha256: String) async -> ServerOutcome {
+        await authorized(path: "/api/v1/tombstones/\(sha256)") { url in
+            var r = URLRequest(url: url)
+            r.httpMethod = "DELETE"
+            return r
+        }.raw
+    }
+
+    /// Call on a network change: the LAN endpoint gets another chance first (R9).
+    public func onNetworkChanged() { endpoints.resetToPreferred() }
 }

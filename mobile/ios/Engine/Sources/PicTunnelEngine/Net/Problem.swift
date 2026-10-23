@@ -69,6 +69,10 @@ public enum NetFailure: Error, Equatable, Sendable {
     /// The request targets a host that is not one of the paired endpoints; it was not sent, so the
     /// bearer token never leaves the paired server.
     case foreignHost(String)
+    /// The token refresh failed transiently (network or server error); the tokens are kept. The
+    /// server may have rotated the refresh token already, so the caller retries the refresh inside
+    /// the server's 30 s grace window (P§6.2) rather than after a generic backoff.
+    case refreshFailed
 }
 
 /// A non-2xx answer from a call that has no `Outcome` (server info).

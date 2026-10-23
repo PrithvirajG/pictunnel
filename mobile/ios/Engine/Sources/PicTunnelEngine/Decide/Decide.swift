@@ -213,7 +213,7 @@ public enum Decide {
         }
         let needsAttention = Decision(nextState: .needsAttention, action: .markNeedsAttention, attemptsDelta: 0)
 
-        switch problemCode(s.body) {
+        switch problemCode(s.body) ?? headCode(g, status) {
         case "invalid_request", "forbidden", "file_too_large":
             return needsAttention
         case "unauthorized", "token_expired":
@@ -247,6 +247,12 @@ public enum Decide {
         default:
             return byStatus(s, status, current)
         }
+    }
+
+    /// A HEAD response never carries a body, so its problem code is implied by the status: `404`
+    /// is the expired or unknown session of P§7.3 (restart with POST), as in the Kotlin engine.
+    private static func headCode(_ g: Given, _ status: Int) -> String? {
+        g.lastAction == .headUpload && status == 404 ? "not_found" : nil
     }
 
     /// R7: an unknown or missing problem code falls back to the HTTP status.

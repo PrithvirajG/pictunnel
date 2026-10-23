@@ -11,6 +11,7 @@ extension Item: FetchableRecord, PersistableRecord {
 /// it governs (R1); GRDB writes are durable when the call returns.
 public final class EngineDB: Sendable {
     private let writer: any DatabaseWriter
+    var readerWriter: any DatabaseWriter { writer }
 
     /// Opens (creating if needed) the database at `path` and runs pending migrations.
     public init(path: String) throws {
@@ -270,4 +271,84 @@ public final class EngineDB: Sendable {
             return out
         }
     }
+}
+
+// MARK: - engine queries (Task 13)
+
+extension EngineDB {
+    /// The longest backoff (R5 cap, 15 min). A `nextAttemptAtMs` further ahead than this can only
+    /// come from a clock that jumped back, so it counts as due (R10).
+    public static let maxBackoffMs: Int64 = 15 * 60 * 1000
+
+    /// Items in `states` whose backoff has passed, newest first.
+    public func due(_ states: [ItemState], nowMs: Int64, limit: Int) throws -> [Item] {
+        try read { db in
+            let next = Column("nextAttemptAtMs")
+            return try Item
+                .filter(states.map(\.rawValue).contains(Column("state")))
+                .filter(next == nil || next <= nowMs || next > nowMs + Self.maxBackoffMs)
+                .order(Column("takenAtMs").desc, Column("localId").desc)
+                .limit(max(limit, 0))
+                .fetchAll(db)
+        }
+    }
+
+    /// The earliest pending backoff among `states`, for scheduling the next run; nil when nothing waits.
+    public func nextAttemptAfter(_ states: [ItemState], nowMs: Int64) throws -> Int64? {
+        try read { db in
+            let next = Column("nextAttemptAtMs")
+            return try Item
+                .filter(states.map(\.rawValue).contains(Column("state")))
+                .filter(next > nowMs && next <= nowMs + Self.maxBackoffMs)
+                .select(min(next), as: Int64?.self)
+                .fetchOne(db) ?? nil
+        }
+    }
+
+    public func sumSize(_ states: [ItemState]) throws -> Int64 {
+        try read { db in
+            try Item
+                .filter(states.map(\.rawValue).contains(Column("state")))
+                .select(sum(Column("size")), as: Int64?.self)
+                .fetchOne(db) ?? nil
+        } ?? 0
+    }
+
+    public func allIds() throws -> [String] {
+        try read { db in try String.fetchAll(db, sql: "SELECT localId FROM items") }
+    }
+
+    public func items(sha256: String) throws -> [Item] {
+        try read { db in try Item.filter(Column("sha256") == sha256).fetchAll(db) }
+    }
+
+    public func deleteHashes(localIds: [String]) throws {
+        try write { db in try db.execute(literal: "DELETE FROM hash_cache WHERE localId IN \(localIds)") }
+    }
+
+    /// The phone index (M§3 `listPhoneItems`): one row per photo-library asset (its primary
+    /// resource; Live Photo videos and unedited originals are components, whose row ids carry
+    /// `#`), newest first by `takenAtMs` then `localId`, both descending, after the exclusive `after`.
+    public func phonePage(after: PageKey?, limit: Int) throws -> [Item] {
+        try read { db in
+            let taken = Column("takenAtMs")
+            let localId = Column("localId")
+            var request = Item
+                .filter(Column("pairRole") == PairRole.primary.rawValue)
+                .filter(sql: "instr(localId, '#') = 0")
+                .order(taken.desc, localId.desc)
+                .limit(max(limit, 0))
+            if let key = after {
+                request = request.filter(taken < key.takenAtMs || (taken == key.takenAtMs && localId < key.localId))
+            }
+            return try request.fetchAll(db)
+        }
+    }
+
+    public func removeSetting(_ key: String) throws {
+        try write { db in try db.execute(sql: "DELETE FROM settings WHERE key = ?", arguments: [key]) }
+    }
+
+    private func read<T>(_ body: (Database) throws -> T) throws -> T { try readerWriter.read(body) }
+    private func write<T>(_ body: (Database) throws -> T) throws -> T { try readerWriter.write(body) }
 }
