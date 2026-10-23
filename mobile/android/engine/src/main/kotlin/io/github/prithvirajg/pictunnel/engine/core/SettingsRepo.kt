@@ -64,14 +64,13 @@ class SettingsRepo(
         return PauseState(reason, dao.get(PAUSE_UNTIL)?.toLongOrNull())
     }
 
+    /** Reason and expiry are written in one transaction (an empty expiry means none). */
     suspend fun setPause(p: PauseState) {
-        put(PAUSE_REASON, p.reason.name)
-        if (p.untilMs != null) put(PAUSE_UNTIL, p.untilMs.toString()) else dao.remove(PAUSE_UNTIL)
+        dao.putAll(listOf(SettingEntity(PAUSE_REASON, p.reason.name), SettingEntity(PAUSE_UNTIL, p.untilMs?.toString() ?: "")))
     }
 
     suspend fun clearPause() {
-        dao.remove(PAUSE_REASON)
-        dao.remove(PAUSE_UNTIL)
+        dao.removeAll(listOf(PAUSE_REASON, PAUSE_UNTIL))
     }
 
     suspend fun lastRunAtMs(): Long? = dao.get(LAST_RUN_AT)?.toLongOrNull()

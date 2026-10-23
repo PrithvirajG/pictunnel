@@ -68,11 +68,21 @@ interface ItemsDao {
     @Query("DELETE FROM items WHERE localId IN (:localIds)")
     suspend fun delete(localIds: List<String>): Int
 
-    /** Items in any of [states] that are due at [nowMs] (no backoff pending), newest first. */
+    /**
+     * Items in any of [states] that are due at [nowMs], newest first, strictly
+     * after the keyset `(afterTakenAt, afterLocalId)` (nulls for the first page).
+     * A backoff later than [latestValidMs] cannot have been set by this clock
+     * (no wait exceeds the 15 min cap), so the clock jumped back and the row is
+     * due now (R10).
+     */
     @Query(
         """
         SELECT * FROM items
-        WHERE state IN (:states) AND (nextAttemptAtMs IS NULL OR nextAttemptAtMs <= :nowMs)
+        WHERE state IN (:states)
+          AND (nextAttemptAtMs IS NULL OR nextAttemptAtMs <= :nowMs OR nextAttemptAtMs > :latestValidMs)
+          AND (:afterTakenAt IS NULL
+            OR takenAtMs < :afterTakenAt
+            OR (takenAtMs = :afterTakenAt AND localId < :afterLocalId))
         ORDER BY takenAtMs DESC, localId DESC
         LIMIT :limit
         """,
@@ -80,6 +90,9 @@ interface ItemsDao {
     suspend fun due(
         states: List<ItemState>,
         nowMs: Long,
+        latestValidMs: Long,
+        afterTakenAt: Long?,
+        afterLocalId: String?,
         limit: Int,
     ): List<ItemEntity>
 
@@ -177,4 +190,11 @@ interface SettingsDao {
 
     @Query("DELETE FROM settings WHERE key = :key")
     suspend fun remove(key: String): Int
+
+    /** One transaction: related keys change together. */
+    @Upsert
+    suspend fun putAll(settings: List<SettingEntity>)
+
+    @Query("DELETE FROM settings WHERE key IN (:keys)")
+    suspend fun removeAll(keys: List<String>): Int
 }

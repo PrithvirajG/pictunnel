@@ -195,6 +195,9 @@ class RealServer private constructor(
 class Chaos : Interceptor {
     val lines: MutableList<String> = Collections.synchronizedList(mutableListOf())
 
+    /** Upload requests (POST /uploads and PATCH) that carried body bytes. */
+    val bodyUploads: MutableList<String> = Collections.synchronizedList(mutableListOf())
+
     @Volatile var dropPatch = 0
 
     @Volatile var dropAfterBytes = 0L
@@ -206,6 +209,8 @@ class Chaos : Interceptor {
     override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
         val req = chain.request()
         lines += "${req.method} ${req.url.encodedPath}"
+        val uploading = req.method == "PATCH" || (req.method == "POST" && req.url.encodedPath == "/api/v1/uploads")
+        if (uploading && (req.body?.contentLength() ?: 0) > 0) bodyUploads += "${req.method} ${req.url.encodedPath}"
         if (req.method != "PATCH") return chain.proceed(req)
         val n = synchronized(this) { ++patches }
         if (n != dropPatch) return chain.proceed(req)
@@ -304,19 +309,15 @@ class ServerIntegrationTest {
             val b = bytes(200_000)
             media.put("d1", b)
             media.put("d2", b)
-            // Both items race for the same content: the second joins the first's session (P§7.3 outcome 4)
-            // and may meet `423 upload_locked`, which backs off. Later runs, as the scheduler would start
-            // them, settle it on the one asset.
-            val c = controller()
-            var runs = 0
-            do {
-                val report = c.runOnce(RunBudget())
-                assertEquals(StopReason.Idle, report.stop)
-                runs++
-                clock.advance(60 * 60 * 1000L)
-            } while (report.nextAttemptAtMs != null && runs < 5)
+            // The second row waits while the same bytes are in flight, then resolves without a body
+            // (P§7.3 outcome #3): one run, one body upload, no failed attempt.
+            val report = controller().runOnce(RunBudget())
+            assertEquals(StopReason.Idle, report.stop)
+            assertEquals(null, report.nextAttemptAtMs)
+            assertEquals("exactly one body upload: ${chaos.lines}", 1, chaos.bodyUploads.size)
             assertEquals(ItemState.BackedUp, item("d1").state)
             assertEquals(ItemState.BackedUp, item("d2").state)
+            assertEquals(0, item("d1").attempts + item("d2").attempts)
             assertEquals(item("d1").assetId, item("d2").assetId)
             assertEquals(1, server!!.assetsWithSha(sha(b)).size)
         }

@@ -55,7 +55,9 @@ class EngineController(
             val pause = settings.pause()
             if (pause != null) {
                 val until = pause.untilMs
-                if (until == null || clock.nowMs() < until) {
+                val now = clock.nowMs()
+                // An expiry beyond the longest pause we set means the clock jumped back: treat it as expired (R10).
+                if (until == null || (now < until && until <= now + Pipeline.MAX_PAUSE_MS)) {
                     ctx.stop(StopReason.Paused)
                     return@withLock report(ctx)
                 }
@@ -72,15 +74,23 @@ class EngineController(
             }
             reporter.publish()
             val concurrency = settings.get().uploadConcurrency
+            var settled = false
             for (pass in 0 until config.maxPasses) {
                 val before = ctx.transitions.get()
+                val deferredBefore = ctx.deferred.get()
                 pipeline.hashPhase(ctx)
                 if (ctx.stopped) break
                 pipeline.checkPhase(ctx)
                 if (ctx.stopped) break
                 pipeline.uploadPhase(ctx, concurrency)
-                if (ctx.stopped || ctx.transitions.get() == before) break
+                if (ctx.stopped) break
+                if (ctx.transitions.get() == before && ctx.deferred.get() == deferredBefore) {
+                    settled = true
+                    break
+                }
             }
+            // Out of passes with work still moving: report it so the scheduler runs again soon.
+            if (!settled) ctx.stop(StopReason.Budget)
             settings.setLastRunAtMs(clock.nowMs())
             reporter.publish(force = true)
             report(ctx)
@@ -95,8 +105,15 @@ class EngineController(
             skipped = ctx.skipped.get(),
             needsAttention = ctx.needsAttention.get(),
             stop = ctx.stop ?: StopReason.Idle,
-            nextAttemptAtMs = items.nextAttemptAfter(ACTIVE_STATES, clock.nowMs()),
+            nextAttemptAtMs = nextAttempt(),
         )
+
+    /** The earliest pending backoff; one beyond the backoff cap means the clock jumped back, so it is due now (R10). */
+    private suspend fun nextAttempt(): Long? {
+        val now = clock.nowMs()
+        val next = items.nextAttemptAfter(ACTIVE_STATES, now) ?: return null
+        return if (next > now + Pipeline.MAX_WAIT_MS) now else next
+    }
 
     suspend fun status(): BackupStatus = reporter.snapshot()
 
@@ -268,12 +285,18 @@ class EngineController(
                     val target = d.nextState
                     if (target != null && target != ItemState.BackedUp) {
                         for (it in group) {
-                            val next =
-                                if (target == ItemState.Discovered) {
-                                    it.copy(state = target, sha256 = null, assetId = null, attempts = 0, nextAttemptAtMs = null)
-                                } else {
-                                    it.copy(state = target, attempts = 0, nextAttemptAtMs = null)
-                                }
+                            // Requeued: the server no longer proves this backup, so drop the asset and any session.
+                            val cleared =
+                                it.copy(
+                                    state = target,
+                                    assetId = null,
+                                    uploadId = null,
+                                    uploadUrl = null,
+                                    uploadOffset = null,
+                                    attempts = 0,
+                                    nextAttemptAtMs = null,
+                                )
+                            val next = if (target == ItemState.Discovered) cleared.copy(sha256 = null) else cleared
                             items.upsert(next)
                             events.itemChanged(next)
                         }

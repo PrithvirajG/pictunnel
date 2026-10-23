@@ -67,6 +67,13 @@ internal class RunCtx(
     /** Items whose `uploadOffset` came from the server during this run; any other offset is confirmed by HEAD first (R2). */
     val freshOffset: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    /**
+     * Content hashes with an upload in flight. A second row with the same bytes
+     * waits for the next pass and then resolves without a body (P§7.3 outcome #3),
+     * so the same content is never uploaded twice at once.
+     */
+    val inFlightSha: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     val transitions = AtomicInteger()
     val scanned = AtomicInteger()
     val hashed = AtomicInteger()
@@ -75,6 +82,9 @@ internal class RunCtx(
     val skipped = AtomicInteger()
     val needsAttention = AtomicInteger()
     val uploadsStarted = AtomicInteger()
+
+    /** Rows deferred because their content was already in flight; the next pass takes them. */
+    val deferred = AtomicInteger()
 
     /** True (and the run stops) once the time budget is spent. */
     fun outOfTime(): Boolean {
@@ -312,11 +322,19 @@ internal class Pipeline(
                     slots.release()
                     break
                 }
+                val sha = item.sha256
+                if (sha != null && !ctx.inFlightSha.add(sha)) {
+                    // Same bytes already uploading: defer to the next pass, no attempt.
+                    ctx.deferred.incrementAndGet()
+                    slots.release()
+                    continue
+                }
                 ctx.uploadsStarted.incrementAndGet()
                 launch {
                     try {
                         uploadItem(ctx, item, chunk)
                     } finally {
+                        if (sha != null) ctx.inFlightSha -= sha
                         slots.release()
                     }
                 }
@@ -383,9 +401,14 @@ internal class Pipeline(
             } else {
                 null
             }
-        // Single-shot creation-with-upload up to the chunk size; a known asset (H4 re-attach) needs no bytes.
+        // Single-shot creation-with-upload up to the chunk size. Content the server already holds
+        // (H4 re-attach, or another row with the same bytes backed up) needs no bytes: outcome #3.
+        val known =
+            item.assetId ?: items.bySha(item.sha256!!).firstOrNull {
+                it.localId != item.localId && (it.state == ItemState.BackedUp || it.state == ItemState.Freed) && it.assetId != null
+            }?.assetId
         val body =
-            if (item.assetId == null && item.size <= chunk) {
+            if (known == null && item.size <= chunk) {
                 body(ctx, item) ?: return item to Next.StopItem
             } else {
                 null
@@ -585,8 +608,12 @@ internal class Pipeline(
                     item.cleared().copy(state = ItemState.Discovered, sha256 = null, attempts = attempts, lastError = error),
                 ) to Next.StopItem
             }
-            Action.BACKOFF_RETRY -> wait(ctx, item.copy(state = state, attempts = attempts, lastError = error), backoff(attempts)) to Next.StopItem
+            Action.BACKOFF_RETRY -> {
+                ctx.freshOffset -= id // the session may move meanwhile: HEAD before the next PATCH
+                wait(ctx, item.copy(state = state, attempts = attempts, lastError = error), backoff(attempts)) to Next.StopItem
+            }
             Action.WAIT_RETRY_AFTER -> {
+                ctx.freshOffset -= id
                 val delay = raw.retryAfterMs(clock.nowMs()) ?: backoff(attempts)
                 wait(ctx, item.copy(state = state, attempts = attempts, lastError = error), delay) to Next.StopItem
             }
@@ -693,11 +720,12 @@ internal class Pipeline(
         hashCache.delete(listOf(localId))
     }
 
+    /** No wait exceeds [MAX_WAIT_MS], which lets due() detect a clock that jumped back (R10). */
     private suspend fun wait(
         ctx: RunCtx,
         item: ItemEntity,
         delayMs: Long,
-    ): ItemEntity = save(ctx, item, item.copy(nextAttemptAtMs = clock.nowMs() + delayMs))
+    ): ItemEntity = save(ctx, item, item.copy(nextAttemptAtMs = clock.nowMs() + delayMs.coerceIn(0, MAX_WAIT_MS)))
 
     private fun backoff(attempts: Int) = backoffDelayMs(attempts.coerceAtLeast(1), config.random)
 
@@ -713,24 +741,43 @@ internal class Pipeline(
         return after
     }
 
+    /**
+     * Up to [limit] due rows not skipped for this run, newest first. Pages by
+     * keyset past skipped rows, so any number of them never hides due work.
+     */
     private suspend fun due(
         states: List<ItemState>,
         ctx: RunCtx,
         limit: Int,
-    ): List<ItemEntity> =
-        items
-            .due(states, clock.nowMs(), limit + minOf(ctx.skipThisRun.size, limit))
-            .filter { it.localId !in ctx.skipThisRun }
+    ): List<ItemEntity> {
+        val now = clock.nowMs()
+        val out = ArrayList<ItemEntity>(limit)
+        var afterTakenAt: Long? = null
+        var afterLocalId: String? = null
+        while (out.size < limit) {
+            val page = items.due(states, now, now + MAX_WAIT_MS, afterTakenAt, afterLocalId, limit)
+            for (it in page) if (it.localId !in ctx.skipThisRun && out.size < limit) out += it
+            if (page.size < limit) break
+            afterTakenAt = page.last().takenAtMs
+            afterLocalId = page.last().localId
+        }
+        return out
+    }
 
     private fun ItemEntity.cleared() = copy(uploadId = null, uploadUrl = null, uploadOffset = null)
 
     companion object {
+        /** The R5 backoff cap; also the longest any row waits. */
+        internal const val MAX_WAIT_MS = 15 * 60 * 1000L
         private const val BATCH = 500
         private const val PAGE = 250
         private const val MAX_STEPS = 64
         private const val MAX_RESOLVES = 2
         private const val SERVER_PAUSE_MS = 30 * 60 * 1000L
         private const val UNTRUSTED_PAUSE_MS = 60 * 60 * 1000L
+
+        /** The longest timed pause the engine sets; a later expiry means the clock jumped back (R10). */
+        internal const val MAX_PAUSE_MS = UNTRUSTED_PAUSE_MS
 
         internal fun errorOf(raw: ServerOutcome): String? = raw.problem()?.code ?: raw.transport ?: raw.status?.let { "http_$it" }
 

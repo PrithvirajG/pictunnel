@@ -190,6 +190,7 @@ class PipelineTest {
         base: String = server.base(),
         chunk: Long? = 8,
         checkBatch: Int = 1000,
+        maxPasses: Int = 20,
     ): EngineController {
         val store = FakeStore(credsFor(base))
         val endpoints = Endpoints(store.creds!!.endpoints)
@@ -209,7 +210,8 @@ class PipelineTest {
             settings = SettingsRepo(db.settings()),
             clock = clock,
             events = events,
-            config = EngineConfig(chunkBytes = chunk, checkBatchSize = checkBatch, random = java.util.Random(7)),
+            config =
+                EngineConfig(chunkBytes = chunk, checkBatchSize = checkBatch, random = java.util.Random(7), maxPasses = maxPasses),
         )
     }
 
@@ -720,6 +722,142 @@ class PipelineTest {
             assertTrue(p3.items.isEmpty())
             assertNull(p3.nextKey)
         }
+
+    // ---- review fix round 1 --------------------------------------------------
+
+    @Test fun sameBytesUploadOnce() =
+        runBlocking {
+            val bytes = "same content in two rows".toByteArray()
+            media.put("s1", bytes)
+            media.put("s2", bytes)
+            handler = { r ->
+                when {
+                    r.isCheck() -> answer(r) { missing(it) }
+                    r.method == "POST" && (r.body?.size ?: 0) > 0 -> {
+                        Thread.sleep(150) // keep the first upload in flight while the other row is considered
+                        created("u1", bytes.size.toLong(), "asset-s")
+                    }
+                    // Bodyless create of content the server holds: outcome #3.
+                    r.method == "POST" -> created("u1", bytes.size.toLong(), "asset-s")
+                    else -> MockResponse.Builder().code(500).build()
+                }
+            }
+            val report = controller(chunk = 1024).runOnce(RunBudget())
+            assertEquals(StopReason.Idle, report.stop)
+            val posts = requests.filter { it.method == "POST" && !it.isCheck() }
+            assertEquals(1, posts.count { (it.body?.size ?: 0) > 0 })
+            assertEquals(2, posts.size)
+            assertEquals(ItemState.BackedUp, item("s1").state)
+            assertEquals(ItemState.BackedUp, item("s2").state)
+            assertEquals(0, item("s1").attempts + item("s2").attempts)
+        }
+
+    @Test fun outOfPassesReportsBudget() =
+        runBlocking {
+            // A Live Photo needs two passes (the video waits for its still); allow one.
+            media.put("p", "still".toByteArray())
+            media.put("v", "video".toByteArray())
+            scannerMeta = { id ->
+                ScannedItem(
+                    localId = id,
+                    size = 5,
+                    modifiedAtMs = 100,
+                    takenAtMs = 5_000,
+                    mime = "image/heic",
+                    kind = ItemKind.LIVE_PHOTO,
+                    filename = id,
+                    pairRole = if (id == "p") PairRole.PRIMARY else PairRole.LIVE_VIDEO,
+                    pairLocalId = if (id == "p") "v" else "p",
+                )
+            }
+            handler = { r ->
+                when {
+                    r.isCheck() -> answer(r) { missing(it) }
+                    r.method == "POST" -> created("u-${metaOf(r)["local_id"]}", 5, "asset-${metaOf(r)["local_id"]}")
+                    else -> MockResponse.Builder().code(500).build()
+                }
+            }
+            val report = controller(chunk = 1024, maxPasses = 1).runOnce(RunBudget())
+            assertEquals(StopReason.Budget, report.stop)
+            assertEquals(ItemState.BackedUp, item("p").state)
+            assertEquals(ItemState.Queued, item("v").state)
+        }
+
+    @Test fun rowIsWrittenBeforeEachCall() =
+        runBlocking {
+            // R1: when a request reaches the server, the row governing it is already stored.
+            val bytes = ByteArray(20) { (it + 5).toByte() }
+            media.put("a", bytes)
+            val violations = Collections.synchronizedList(mutableListOf<String>())
+            handler = { r ->
+                val row = runBlocking { db.items().get("a") }
+                when {
+                    r.isCheck() -> {
+                        if (!(row?.state == ItemState.Hashed && row.sha256 == sha(bytes))) violations += "check before Hashed: $row"
+                        answer(r) { missing(it) }
+                    }
+                    r.method == "POST" -> {
+                        if (row?.state != ItemState.Queued) violations += "create before Queued: $row"
+                        created("u1", 0)
+                    }
+                    r.method == "PATCH" -> {
+                        val off = r.headers["Upload-Offset"]!!.toLong()
+                        if (!(row?.state == ItemState.Uploading && row.uploadUrl != null && row.uploadOffset == off)) {
+                            violations += "PATCH at $off before its row: $row"
+                        }
+                        if (off + 8 >= 20) patched(20, "asset-r1") else patched(off + 8)
+                    }
+                    else -> MockResponse.Builder().code(500).build()
+                }
+            }
+            controller().runOnce(RunBudget())
+            assertEquals(ItemState.BackedUp, item("a").state)
+            assertEquals(3, requests.count { it.method == "PATCH" })
+            assertTrue(violations.toString(), violations.isEmpty())
+        }
+
+    @Test fun clockJumpBackDoesNotStrandBackoffOrPause() =
+        runBlocking {
+            media.put("a", "j".toByteArray())
+            var fail = true
+            handler = { r ->
+                when {
+                    r.isCheck() && fail -> problem(500, "internal")
+                    r.isCheck() -> answer(r) { exists(it, "asset-j") }
+                    else -> MockResponse.Builder().code(500).build()
+                }
+            }
+            val c = controller()
+            c.runOnce(RunBudget())
+            assertNotNull(item("a").nextAttemptAtMs)
+            // The device clock jumps a day back: the stored backoff now looks a day away (R10).
+            clock.now -= 24 * 60 * 60 * 1000L
+            c.runOnce(RunBudget())
+            assertEquals(2, requests.count { it.isCheck() })
+
+            // A timed pause cannot outlive a clock jump either.
+            fail = false
+            SettingsRepo(db.settings()).setPause(PauseState(PauseReason.ServerFull, clock.now + 30 * 60 * 1000L))
+            clock.now -= 24 * 60 * 60 * 1000L
+            clock.advance(0)
+            val report = c.runOnce(RunBudget())
+            assertEquals(StopReason.Idle, report.stop)
+            assertEquals(ItemState.BackedUp, item("a").state)
+        }
+
+    @Test fun skippedRowsNeverHideDueWork() =
+        runBlocking {
+            // The four newest rows get an answer to skip for this run; the oldest must still be checked.
+            for (i in 0 until 5) media.put("k$i", "keyset $i".toByteArray())
+            val oldest = sha(media.bytes["k0"]!!)
+            handler = { r ->
+                answer(r) { s -> if (s == oldest) exists(s, "asset-k") else """{"sha256":"$s","verdict":"exists"}""" }
+            }
+            controller(checkBatch = 2).runOnce(RunBudget())
+            assertEquals(ItemState.BackedUp, item("k0").state)
+            for (i in 1 until 5) assertEquals(ItemState.Hashed, item("k$i").state)
+        }
+
 
     @Test fun activityLogIsARingOf1000() =
         runBlocking {
