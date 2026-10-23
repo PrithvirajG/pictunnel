@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/engine/engine.dart';
+import '../features/activity/activity_screen.dart';
+import '../features/attention/attention_screen.dart';
+import '../features/backup/backup_screen.dart';
 import '../features/pairing/manual_server_screen.dart';
 import '../features/pairing/pair_screen.dart';
 import 'shell.dart';
@@ -75,16 +78,15 @@ GoRouter buildRouter(Ref ref) {
             routes: [
               GoRoute(
                 path: '/backup',
-                builder: (_, _) => const PlaceholderScreen('Backup'),
+                builder: (_, _) => const BackupScreen(),
                 routes: [
                   GoRoute(
                     path: 'attention',
-                    builder: (_, _) =>
-                        const PlaceholderScreen('Needs attention'),
+                    builder: (_, _) => const AttentionScreen(),
                   ),
                   GoRoute(
                     path: 'activity',
-                    builder: (_, _) => const PlaceholderScreen('Activity'),
+                    builder: (_, _) => const ActivityScreen(),
                   ),
                 ],
               ),

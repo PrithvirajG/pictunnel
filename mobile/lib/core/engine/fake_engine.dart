@@ -2,6 +2,7 @@
 library;
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart' show PlatformException;
 
@@ -95,15 +96,62 @@ class FakeEngine implements Engine {
   @override
   Future<void> start() async => startCalls++;
 
+  /// Returned by [getStatus]; tests set it before pumping the screen.
+  BackupStatus status = BackupStatus(
+    backedUp: 0,
+    total: 0,
+    queued: 0,
+    needsAttention: 0,
+    skipped: 0,
+    freeableBytes: 0,
+    paused: false,
+    preparing: 0,
+  );
+  EngineSettings settings = EngineSettings(
+    wifiOnly: true,
+    chargingOnly: false,
+    includeVideos: true,
+    keepUneditedOriginals: false,
+    allAlbums: true,
+    albumIds: [],
+  );
+  List<PhoneItem> phoneItems = [];
+  List<AttentionItem> attention = [];
+  List<ActivityEntry> activity = [];
+
+  final pauseCalls = <PauseReason>[];
+  final retryCalls = <List<String>>[];
+  var runNowCalls = 0;
+
   @override
-  Future<BackupStatus> getStatus() async => BackupStatus(
-        backedUp: 0,
-        total: 0,
-        queued: 0,
-        needsAttention: 0,
-        skipped: 0,
-        freeableBytes: 0,
-        paused: false,
-        preparing: 0,
-      );
+  Future<BackupStatus> getStatus() async => status;
+
+  @override
+  Future<void> pause(PauseReason reason) async => pauseCalls.add(reason);
+
+  @override
+  Future<void> runNow() async => runNowCalls++;
+
+  @override
+  Future<EngineSettings> getSettings() async => settings;
+
+  @override
+  Future<PhoneItemPage> listPhoneItems(PageRequest req) async =>
+      PhoneItemPage(items: phoneItems);
+
+  @override
+  Future<Uint8List> phoneThumbnail(String localId, int sizePx) async =>
+      Uint8List(0);
+
+  @override
+  Future<List<AttentionItem>> listAttention() async => attention;
+
+  @override
+  Future<void> retry(List<String> localIds) async {
+    retryCalls.add(localIds);
+    attention = attention.where((a) => !localIds.contains(a.localId)).toList();
+  }
+
+  @override
+  Future<List<ActivityEntry>> listActivity(int limit) async => activity;
 }

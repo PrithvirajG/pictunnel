@@ -3,6 +3,7 @@
 library;
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -10,12 +11,20 @@ import 'pigeon.g.dart';
 
 export 'pigeon.g.dart'
     show
+        ActivityEntry,
+        AttentionItem,
         BackupStatus,
+        EngineSettings,
+        ItemState,
+        PageRequest,
         PairRequest,
         PairResult,
+        PauseReason,
         PhoneItem,
+        PhoneItemPage,
         ServerConnection,
-        ServerIdentity;
+        ServerIdentity,
+        UploadProgress;
 
 /// What the Flutter side needs from a backup engine. Later tasks add the
 /// Backup/Photos/Settings calls here as they need them.
@@ -27,6 +36,14 @@ abstract interface class Engine {
   Future<void> unpair();
   Future<void> start();
   Future<BackupStatus> getStatus();
+  Future<void> pause(PauseReason reason);
+  Future<void> runNow();
+  Future<EngineSettings> getSettings();
+  Future<PhoneItemPage> listPhoneItems(PageRequest req);
+  Future<Uint8List> phoneThumbnail(String localId, int sizePx);
+  Future<List<AttentionItem>> listAttention();
+  Future<void> retry(List<String> localIds);
+  Future<List<ActivityEntry>> listActivity(int limit);
 
   /// Throttled by the engine to at most 4 per second.
   Stream<BackupStatus> get status$;
@@ -40,7 +57,7 @@ abstract interface class Engine {
 /// [EngineEventsApi] handler.
 class PigeonEngine implements Engine, EngineEventsApi {
   PigeonEngine({EngineHostApi? host, bool registerEvents = true})
-      : _host = host ?? EngineHostApi() {
+    : _host = host ?? EngineHostApi() {
     if (registerEvents) EngineEventsApi.setUp(this);
   }
 
@@ -79,6 +96,26 @@ class PigeonEngine implements Engine, EngineEventsApi {
   Future<void> start() => _host.start();
   @override
   Future<BackupStatus> getStatus() => _host.getStatus();
+
+  @override
+  Future<void> pause(PauseReason reason) => _host.pause(reason);
+  @override
+  Future<void> runNow() => _host.runNow();
+  @override
+  Future<EngineSettings> getSettings() => _host.getSettings();
+  @override
+  Future<PhoneItemPage> listPhoneItems(PageRequest req) =>
+      _host.listPhoneItems(req);
+  @override
+  Future<Uint8List> phoneThumbnail(String localId, int sizePx) =>
+      _host.phoneThumbnail(localId, sizePx);
+  @override
+  Future<List<AttentionItem>> listAttention() => _host.listAttention();
+  @override
+  Future<void> retry(List<String> localIds) => _host.retry(localIds);
+  @override
+  Future<List<ActivityEntry>> listActivity(int limit) =>
+      _host.listActivity(limit);
 
   void dispose() {
     EngineEventsApi.setUp(null);
