@@ -59,6 +59,28 @@ class ServerAssetsDao {
         ]);
   }
 
+  /// Trashed assets, most recently captured first.
+  Stream<List<ServerAsset>> watchTrashed() {
+    final q = _db.select(_db.serverAssets)
+      ..where((t) => t.state.equals('trashed'))
+      ..orderBy([
+        (t) => OrderingTerm.desc(t.sortAt),
+        (t) => OrderingTerm.asc(t.id),
+      ]);
+    return q.watch();
+  }
+
+  /// Applies a trash or restore locally right after the server accepted it;
+  /// the change feed later confirms it with a newer `updated_seq`.
+  Future<void> setState(Iterable<String> ids, String state) =>
+      (_db.update(_db.serverAssets)..where((t) => t.id.isIn(ids.toList())))
+          .write(ServerAssetsCompanion(state: Value(state)));
+
+  /// Drops every trashed row (after "Empty trash").
+  Future<void> removeTrashed() =>
+      (_db.delete(_db.serverAssets)..where((t) => t.state.equals('trashed')))
+          .go();
+
   Future<ServerAsset?> byId(String id) => (_db.select(_db.serverAssets)
         ..where((t) => t.id.equals(id)))
       .getSingleOrNull();

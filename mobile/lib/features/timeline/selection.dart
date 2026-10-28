@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart' show ItemState;
+import '../viewer/viewer_actions.dart';
 import 'timeline_model.dart';
 
 class SelectionState {
@@ -50,7 +51,7 @@ class NoopTimelineActions implements TimelineActions {
 }
 
 final timelineActionsProvider = Provider<TimelineActions>(
-  (_) => const NoopTimelineActions(),
+  ServerTimelineActions.new,
 );
 
 /// Items a download applies to: on the server but not on this phone.

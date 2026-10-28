@@ -9,6 +9,8 @@ import '../features/backup/backup_screen.dart';
 import '../features/pairing/manual_server_screen.dart';
 import '../features/pairing/pair_screen.dart';
 import '../features/timeline/timeline_screen.dart';
+import '../features/trash/trash_screen.dart';
+import '../features/viewer/viewer_screen.dart';
 import 'shell.dart';
 import 'theme/tokens.dart';
 import 'theme/typography.dart';
@@ -30,11 +32,14 @@ final routerProvider = Provider<GoRouter>((ref) {
 });
 
 GoRouter buildRouter(Ref ref) {
+  // Root navigator, so the viewer covers the shell's bottom navigation.
+  final rootNavigatorKey = GlobalKey<NavigatorState>();
   final refresh = ValueNotifier<int>(0);
   ref.listen(serverConnectedProvider, (_, _) => refresh.value++);
   ref.onDispose(refresh.dispose);
 
   return GoRouter(
+    navigatorKey: rootNavigatorKey,
     initialLocation: '/photos',
     refreshListenable: refresh,
     redirect: (context, state) {
@@ -67,9 +72,9 @@ GoRouter buildRouter(Ref ref) {
                 routes: [
                   GoRoute(
                     path: ':assetKey',
-                    builder: (_, s) => PlaceholderScreen(
-                      'Photo ${s.pathParameters['assetKey']}',
-                    ),
+                    parentNavigatorKey: rootNavigatorKey,
+                    builder: (_, s) =>
+                        ViewerScreen(assetKey: s.pathParameters['assetKey']!),
                   ),
                 ],
               ),
@@ -101,7 +106,7 @@ GoRouter buildRouter(Ref ref) {
                 routes: [
                   GoRoute(
                     path: 'trash',
-                    builder: (_, _) => const PlaceholderScreen('Trash'),
+                    builder: (_, _) => const TrashScreen(),
                   ),
                 ],
               ),
