@@ -128,6 +128,13 @@ enum PauseReason {
   quota,
   clientTooOld,
   permission,
+  serverCertificateChanged,
+}
+
+enum MediaAccess {
+  full,
+  partial,
+  none,
 }
 
 class PairRequest {
@@ -463,6 +470,7 @@ class BackupStatus {
     this.pauseReason,
     this.lastRunAtMs,
     required this.preparing,
+    required this.mediaAccess,
   });
 
   int backedUp;
@@ -487,6 +495,8 @@ class BackupStatus {
 
   int preparing;
 
+  MediaAccess mediaAccess;
+
   List<Object?> _toList() {
     return <Object?>[
       backedUp,
@@ -500,6 +510,7 @@ class BackupStatus {
       pauseReason,
       lastRunAtMs,
       preparing,
+      mediaAccess,
     ];
   }
 
@@ -520,6 +531,7 @@ class BackupStatus {
       pauseReason: result[8] as PauseReason?,
       lastRunAtMs: result[9] as int?,
       preparing: result[10]! as int,
+      mediaAccess: result[11]! as MediaAccess,
     );
   }
 
@@ -532,7 +544,7 @@ class BackupStatus {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(backedUp, other.backedUp) && _deepEquals(total, other.total) && _deepEquals(queued, other.queued) && _deepEquals(uploading, other.uploading) && _deepEquals(needsAttention, other.needsAttention) && _deepEquals(skipped, other.skipped) && _deepEquals(freeableBytes, other.freeableBytes) && _deepEquals(paused, other.paused) && _deepEquals(pauseReason, other.pauseReason) && _deepEquals(lastRunAtMs, other.lastRunAtMs) && _deepEquals(preparing, other.preparing);
+    return _deepEquals(backedUp, other.backedUp) && _deepEquals(total, other.total) && _deepEquals(queued, other.queued) && _deepEquals(uploading, other.uploading) && _deepEquals(needsAttention, other.needsAttention) && _deepEquals(skipped, other.skipped) && _deepEquals(freeableBytes, other.freeableBytes) && _deepEquals(paused, other.paused) && _deepEquals(pauseReason, other.pauseReason) && _deepEquals(lastRunAtMs, other.lastRunAtMs) && _deepEquals(preparing, other.preparing) && _deepEquals(mediaAccess, other.mediaAccess);
   }
 
   @override
@@ -541,7 +553,7 @@ class BackupStatus {
 
   @override
   String toString() {
-    return 'BackupStatus(backedUp: $backedUp, total: $total, queued: $queued, uploading: $uploading, needsAttention: $needsAttention, skipped: $skipped, freeableBytes: $freeableBytes, paused: $paused, pauseReason: $pauseReason, lastRunAtMs: $lastRunAtMs, preparing: $preparing)';
+    return 'BackupStatus(backedUp: $backedUp, total: $total, queued: $queued, uploading: $uploading, needsAttention: $needsAttention, skipped: $skipped, freeableBytes: $freeableBytes, paused: $paused, pauseReason: $pauseReason, lastRunAtMs: $lastRunAtMs, preparing: $preparing, mediaAccess: $mediaAccess)';
   }
 }
 
@@ -618,6 +630,7 @@ class EngineSettings {
 class PhoneItem {
   PhoneItem({
     required this.localId,
+    required this.filename,
     this.sha256,
     required this.takenAtMs,
     required this.mime,
@@ -631,6 +644,8 @@ class PhoneItem {
   });
 
   String localId;
+
+  String filename;
 
   String? sha256;
 
@@ -655,6 +670,7 @@ class PhoneItem {
   List<Object?> _toList() {
     return <Object?>[
       localId,
+      filename,
       sha256,
       takenAtMs,
       mime,
@@ -675,16 +691,17 @@ class PhoneItem {
     result as List<Object?>;
     return PhoneItem(
       localId: result[0]! as String,
-      sha256: result[1] as String?,
-      takenAtMs: result[2]! as int,
-      mime: result[3]! as String,
-      size: result[4]! as int,
-      width: result[5] as int?,
-      height: result[6] as int?,
-      durationMs: result[7] as int?,
-      state: result[8]! as ItemState,
-      assetId: result[9] as String?,
-      isLivePhoto: result[10]! as bool,
+      filename: result[1]! as String,
+      sha256: result[2] as String?,
+      takenAtMs: result[3]! as int,
+      mime: result[4]! as String,
+      size: result[5]! as int,
+      width: result[6] as int?,
+      height: result[7] as int?,
+      durationMs: result[8] as int?,
+      state: result[9]! as ItemState,
+      assetId: result[10] as String?,
+      isLivePhoto: result[11]! as bool,
     );
   }
 
@@ -697,7 +714,7 @@ class PhoneItem {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(localId, other.localId) && _deepEquals(sha256, other.sha256) && _deepEquals(takenAtMs, other.takenAtMs) && _deepEquals(mime, other.mime) && _deepEquals(size, other.size) && _deepEquals(width, other.width) && _deepEquals(height, other.height) && _deepEquals(durationMs, other.durationMs) && _deepEquals(state, other.state) && _deepEquals(assetId, other.assetId) && _deepEquals(isLivePhoto, other.isLivePhoto);
+    return _deepEquals(localId, other.localId) && _deepEquals(filename, other.filename) && _deepEquals(sha256, other.sha256) && _deepEquals(takenAtMs, other.takenAtMs) && _deepEquals(mime, other.mime) && _deepEquals(size, other.size) && _deepEquals(width, other.width) && _deepEquals(height, other.height) && _deepEquals(durationMs, other.durationMs) && _deepEquals(state, other.state) && _deepEquals(assetId, other.assetId) && _deepEquals(isLivePhoto, other.isLivePhoto);
   }
 
   @override
@@ -706,7 +723,7 @@ class PhoneItem {
 
   @override
   String toString() {
-    return 'PhoneItem(localId: $localId, sha256: $sha256, takenAtMs: $takenAtMs, mime: $mime, size: $size, width: $width, height: $height, durationMs: $durationMs, state: $state, assetId: $assetId, isLivePhoto: $isLivePhoto)';
+    return 'PhoneItem(localId: $localId, filename: $filename, sha256: $sha256, takenAtMs: $takenAtMs, mime: $mime, size: $size, width: $width, height: $height, durationMs: $durationMs, state: $state, assetId: $assetId, isLivePhoto: $isLivePhoto)';
   }
 }
 
@@ -817,6 +834,7 @@ class AttentionItem {
     required this.code,
     required this.message,
     required this.attempts,
+    this.sha256,
   });
 
   String localId;
@@ -829,6 +847,8 @@ class AttentionItem {
 
   int attempts;
 
+  String? sha256;
+
   List<Object?> _toList() {
     return <Object?>[
       localId,
@@ -836,6 +856,7 @@ class AttentionItem {
       code,
       message,
       attempts,
+      sha256,
     ];
   }
 
@@ -850,6 +871,7 @@ class AttentionItem {
       code: result[2]! as String,
       message: result[3]! as String,
       attempts: result[4]! as int,
+      sha256: result[5] as String?,
     );
   }
 
@@ -862,7 +884,7 @@ class AttentionItem {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(localId, other.localId) && _deepEquals(filename, other.filename) && _deepEquals(code, other.code) && _deepEquals(message, other.message) && _deepEquals(attempts, other.attempts);
+    return _deepEquals(localId, other.localId) && _deepEquals(filename, other.filename) && _deepEquals(code, other.code) && _deepEquals(message, other.message) && _deepEquals(attempts, other.attempts) && _deepEquals(sha256, other.sha256);
   }
 
   @override
@@ -871,7 +893,7 @@ class AttentionItem {
 
   @override
   String toString() {
-    return 'AttentionItem(localId: $localId, filename: $filename, code: $code, message: $message, attempts: $attempts)';
+    return 'AttentionItem(localId: $localId, filename: $filename, code: $code, message: $message, attempts: $attempts, sha256: $sha256)';
   }
 }
 
@@ -1109,50 +1131,53 @@ class _PigeonCodec extends StandardMessageCodec {
     }    else if (value is PauseReason) {
       buffer.putUint8(130);
       writeValue(buffer, value.index);
-    }    else if (value is PairRequest) {
+    }    else if (value is MediaAccess) {
       buffer.putUint8(131);
-      writeValue(buffer, value.encode());
-    }    else if (value is PairResult) {
+      writeValue(buffer, value.index);
+    }    else if (value is PairRequest) {
       buffer.putUint8(132);
       writeValue(buffer, value.encode());
-    }    else if (value is ServerIdentity) {
+    }    else if (value is PairResult) {
       buffer.putUint8(133);
       writeValue(buffer, value.encode());
-    }    else if (value is ServerConnection) {
+    }    else if (value is ServerIdentity) {
       buffer.putUint8(134);
       writeValue(buffer, value.encode());
-    }    else if (value is UploadProgress) {
+    }    else if (value is ServerConnection) {
       buffer.putUint8(135);
       writeValue(buffer, value.encode());
-    }    else if (value is BackupStatus) {
+    }    else if (value is UploadProgress) {
       buffer.putUint8(136);
       writeValue(buffer, value.encode());
-    }    else if (value is EngineSettings) {
+    }    else if (value is BackupStatus) {
       buffer.putUint8(137);
       writeValue(buffer, value.encode());
-    }    else if (value is PhoneItem) {
+    }    else if (value is EngineSettings) {
       buffer.putUint8(138);
       writeValue(buffer, value.encode());
-    }    else if (value is PageRequest) {
+    }    else if (value is PhoneItem) {
       buffer.putUint8(139);
       writeValue(buffer, value.encode());
-    }    else if (value is PhoneItemPage) {
+    }    else if (value is PageRequest) {
       buffer.putUint8(140);
       writeValue(buffer, value.encode());
-    }    else if (value is AttentionItem) {
+    }    else if (value is PhoneItemPage) {
       buffer.putUint8(141);
       writeValue(buffer, value.encode());
-    }    else if (value is ActivityEntry) {
+    }    else if (value is AttentionItem) {
       buffer.putUint8(142);
       writeValue(buffer, value.encode());
-    }    else if (value is SkippedFree) {
+    }    else if (value is ActivityEntry) {
       buffer.putUint8(143);
       writeValue(buffer, value.encode());
-    }    else if (value is FreeUpResult) {
+    }    else if (value is SkippedFree) {
       buffer.putUint8(144);
       writeValue(buffer, value.encode());
-    }    else if (value is AlbumInfo) {
+    }    else if (value is FreeUpResult) {
       buffer.putUint8(145);
+      writeValue(buffer, value.encode());
+    }    else if (value is AlbumInfo) {
+      buffer.putUint8(146);
       writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
@@ -1169,34 +1194,37 @@ class _PigeonCodec extends StandardMessageCodec {
         final value = readValue(buffer) as int?;
         return value == null ? null : PauseReason.values[value];
       case 131:
-        return PairRequest.decode(readValue(buffer)!);
+        final value = readValue(buffer) as int?;
+        return value == null ? null : MediaAccess.values[value];
       case 132:
-        return PairResult.decode(readValue(buffer)!);
+        return PairRequest.decode(readValue(buffer)!);
       case 133:
-        return ServerIdentity.decode(readValue(buffer)!);
+        return PairResult.decode(readValue(buffer)!);
       case 134:
-        return ServerConnection.decode(readValue(buffer)!);
+        return ServerIdentity.decode(readValue(buffer)!);
       case 135:
-        return UploadProgress.decode(readValue(buffer)!);
+        return ServerConnection.decode(readValue(buffer)!);
       case 136:
-        return BackupStatus.decode(readValue(buffer)!);
+        return UploadProgress.decode(readValue(buffer)!);
       case 137:
-        return EngineSettings.decode(readValue(buffer)!);
+        return BackupStatus.decode(readValue(buffer)!);
       case 138:
-        return PhoneItem.decode(readValue(buffer)!);
+        return EngineSettings.decode(readValue(buffer)!);
       case 139:
-        return PageRequest.decode(readValue(buffer)!);
+        return PhoneItem.decode(readValue(buffer)!);
       case 140:
-        return PhoneItemPage.decode(readValue(buffer)!);
+        return PageRequest.decode(readValue(buffer)!);
       case 141:
-        return AttentionItem.decode(readValue(buffer)!);
+        return PhoneItemPage.decode(readValue(buffer)!);
       case 142:
-        return ActivityEntry.decode(readValue(buffer)!);
+        return AttentionItem.decode(readValue(buffer)!);
       case 143:
-        return SkippedFree.decode(readValue(buffer)!);
+        return ActivityEntry.decode(readValue(buffer)!);
       case 144:
-        return FreeUpResult.decode(readValue(buffer)!);
+        return SkippedFree.decode(readValue(buffer)!);
       case 145:
+        return FreeUpResult.decode(readValue(buffer)!);
+      case 146:
         return AlbumInfo.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);

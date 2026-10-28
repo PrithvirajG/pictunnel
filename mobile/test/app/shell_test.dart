@@ -83,6 +83,7 @@ void main() {
         freeableBytes: 0,
         paused: false,
         preparing: 0,
+        mediaAccess: MediaAccess.full,
       );
     final container = ProviderContainer(
       overrides: [

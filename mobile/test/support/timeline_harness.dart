@@ -30,6 +30,7 @@ PhoneItem phone(
   bool live = false,
 }) => PhoneItem(
   localId: id,
+  filename: '$id.jpg',
   sha256: sha,
   takenAtMs: at.millisecondsSinceEpoch,
   mime: mime,

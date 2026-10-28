@@ -28,6 +28,7 @@ void main() {
       pauseReason: PauseReason.wifiRequired,
       lastRunAtMs: 1760000000000,
       preparing: 12,
+      mediaAccess: MediaAccess.partial,
     );
 
     final back = roundTrip(status);
@@ -48,6 +49,7 @@ void main() {
     expect(back.pauseReason, PauseReason.wifiRequired);
     expect(back.lastRunAtMs, 1760000000000);
     expect(back.preparing, 12);
+    expect(back.mediaAccess, MediaAccess.partial);
   });
 
   test('BackupStatus keeps absent optionals null', () {
@@ -60,6 +62,7 @@ void main() {
       freeableBytes: 0,
       paused: false,
       preparing: 0,
+      mediaAccess: MediaAccess.none,
     );
 
     final back = roundTrip(status);
@@ -73,6 +76,7 @@ void main() {
   test('PhoneItem survives the generated codec with every field intact', () {
     final item = PhoneItem(
       localId: 'local-42',
+      filename: 'IMG_0042.HEIC',
       sha256: 'ab' * 32,
       takenAtMs: 1759000000000,
       mime: 'image/heic',
@@ -89,6 +93,7 @@ void main() {
 
     expect(back, item);
     expect(back.localId, 'local-42');
+    expect(back.filename, 'IMG_0042.HEIC');
     expect(back.sha256, 'ab' * 32);
     expect(back.takenAtMs, 1759000000000);
     expect(back.mime, 'image/heic');
@@ -104,6 +109,7 @@ void main() {
   test('PhoneItem keeps absent optionals null', () {
     final item = PhoneItem(
       localId: 'local-1',
+      filename: 'VID_1.MP4',
       takenAtMs: 1,
       mime: 'video/mp4',
       size: 1,
@@ -119,5 +125,21 @@ void main() {
     expect(back.height, isNull);
     expect(back.durationMs, isNull);
     expect(back.assetId, isNull);
+  });
+
+  test('AttentionItem and the new pause reason survive the codec', () {
+    final item = AttentionItem(
+      localId: 'l',
+      filename: 'IMG.JPG',
+      code: 'tombstoned',
+      message: 'm',
+      attempts: 0,
+      sha256: 'cd' * 32,
+    );
+    expect(roundTrip(item).sha256, 'cd' * 32);
+    expect(
+      roundTrip(PauseReason.serverCertificateChanged),
+      PauseReason.serverCertificateChanged,
+    );
   });
 }

@@ -142,7 +142,30 @@ class ControllerPlatformHooksTest {
         assertEquals(MediaAccess.Full, engine.mediaAccess())
         access = MediaAccess.Partial
         assertEquals(MediaAccess.Partial, engine.mediaAccess())
+        assertEquals(MediaAccess.Partial, runBlocking { engine.status() }.mediaAccess)
+        access = MediaAccess.None
+        assertEquals(MediaAccess.None, runBlocking { engine.status() }.mediaAccess)
     }
+
+    @Test fun attentionListsFailedAndTombstonedItems() =
+        runBlocking {
+            val (engine, _) = controller()
+            db.items().upsertAll(
+                listOf(
+                    row("bad", ItemState.NeedsAttention).copy(lastError = "file_too_large", attempts = 10, sha256 = "b".repeat(64)),
+                    row("gone", ItemState.Skipped).copy(lastError = "tombstoned", sha256 = "c".repeat(64)),
+                    row("gone-v", ItemState.Skipped, role = PairRole.LIVE_VIDEO).copy(sha256 = "d".repeat(64)),
+                    row("ok", ItemState.BackedUp),
+                ),
+            )
+            val list = engine.listAttention()
+            assertEquals(listOf("bad", "gone"), list.map { it.localId })
+            assertNull("failed items offer Retry, not Back up again", list[0].sha256)
+            assertEquals("file_too_large", list[0].code)
+            assertEquals("c".repeat(64), list[1].sha256)
+            assertEquals(EngineController.TOMBSTONED, list[1].code)
+            assertEquals("gone.jpg", list[1].filename)
+        }
 
     @Test fun turningVideosOnRescansExistingVideos() =
         runBlocking {

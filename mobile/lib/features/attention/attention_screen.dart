@@ -17,6 +17,8 @@ const problemCopy = <String, String>{
   'checksum_mismatch': 'The upload arrived damaged. Try again.',
   'client_too_old': 'Update PicTunnel to back this up.',
   'forbidden': "This account isn't allowed to upload this file.",
+  'tombstoned':
+      'You deleted this from your server, so PicTunnel skips it.',
 };
 
 String attentionReason(AttentionItem i) =>
@@ -58,6 +60,8 @@ class _Row extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Skipped (tombstoned) items carry their hash: offer "Back up again".
+    final sha = item.sha256;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10),
       decoration: const BoxDecoration(
@@ -89,11 +93,16 @@ class _Row extends ConsumerWidget {
               foregroundColor: Tokens.accent,
             ),
             onPressed: () async {
-              await ref.read(engineProvider).retry([item.localId]);
+              final engine = ref.read(engineProvider);
+              if (sha != null) {
+                await engine.undoSkip(sha);
+              } else {
+                await engine.retry([item.localId]);
+              }
               ref.invalidate(attentionProvider);
             },
             child: Text(
-              'Retry',
+              sha != null ? 'Back up again' : 'Retry',
               style: bodyStyle(size: 14, weight: 700, color: Tokens.accent),
             ),
           ),

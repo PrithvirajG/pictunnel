@@ -16,6 +16,7 @@ class StatusReporter(
     private val settings: SettingsRepo,
     private val clock: Clock,
     private val events: EngineEvents,
+    private val mediaAccess: () -> MediaAccess = { MediaAccess.Full },
 ) {
     private class InFlight(
         val localId: String,
@@ -75,6 +76,7 @@ class StatusReporter(
             pauseReason = pause?.reason,
             lastRunAtMs = settings.lastRunAtMs(),
             preparing = c[ItemState.Discovered] + c[ItemState.Hashed],
+            mediaAccess = mediaAccess(),
         )
     }
 

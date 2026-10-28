@@ -106,6 +106,7 @@ class FakeEngine implements Engine {
     freeableBytes: 0,
     paused: false,
     preparing: 0,
+    mediaAccess: MediaAccess.full,
   );
   EngineSettings settings = EngineSettings(
     wifiOnly: true,
@@ -121,6 +122,7 @@ class FakeEngine implements Engine {
 
   final pauseCalls = <PauseReason>[];
   final retryCalls = <List<String>>[];
+  final undoSkipCalls = <String>[];
   var runNowCalls = 0;
 
   @override
@@ -154,4 +156,10 @@ class FakeEngine implements Engine {
 
   @override
   Future<List<ActivityEntry>> listActivity(int limit) async => activity;
+
+  @override
+  Future<void> undoSkip(String sha256) async {
+    undoSkipCalls.add(sha256);
+    attention = attention.where((a) => a.sha256 != sha256).toList();
+  }
 }

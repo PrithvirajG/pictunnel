@@ -42,12 +42,14 @@ final phoneThumbProvider = FutureProvider.autoDispose.family<Uint8List, String>(
   (ref, localId) => ref.watch(engineProvider).phoneThumbnail(localId, 96),
 );
 
-/// How much of the photo library the OS lets the app read. The engine only
-/// reports a `permission` pause; partial access (Android 14+ selected photos,
-/// iOS limited) is supplied by the platform layer through this provider.
-enum MediaAccess { full, partial, denied }
-
-final mediaAccessProvider = Provider<MediaAccess>((_) => MediaAccess.full);
+/// How much of the photo library the OS lets the app read (Android 14+
+/// selected photos, iOS limited), as the engine reports it in
+/// [BackupStatus.mediaAccess]. Full until the first status arrives.
+final mediaAccessProvider = Provider.autoDispose<MediaAccess>(
+  (ref) =>
+      ref.watch(backupStatusProvider.select((s) => s.value?.mediaAccess)) ??
+      MediaAccess.full,
+);
 
 /// Opens the OS flow for granting full access. Overridden by the platform
 /// layer; does nothing until then.

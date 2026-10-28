@@ -40,7 +40,7 @@ class EngineController(
 ) : BackupEngine {
     private val items = db.items()
     private val log = ActivityLog(db.activity(), clock)
-    private val reporter = StatusReporter(items, settings, clock, events)
+    private val reporter = StatusReporter(items, settings, clock, events, scanner::access)
     private val pipeline = Pipeline(db, media, client, settings, clock, events, log, reporter, config)
     private val runLock = Mutex()
 
@@ -216,11 +216,33 @@ class EngineController(
         return PhoneItemPage(page, next)
     }
 
-    suspend fun listAttention(): List<AttentionItem> =
-        items.byState(listOf(ItemState.NeedsAttention), MAX_PAGE).map {
-            val code = it.lastError ?: "unknown"
-            AttentionItem(it.localId, it.filename, code, attentionMessage(code), it.attempts)
-        }
+    /**
+     * Items that need the user: failed ones (Retry) and, for "Back up again"
+     * (M§7), primary items skipped because their content was deleted from the
+     * server. Only skipped items carry [AttentionItem.sha256].
+     */
+    suspend fun listAttention(): List<AttentionItem> {
+        val failed =
+            items.byState(listOf(ItemState.NeedsAttention), MAX_PAGE).map {
+                val code = it.lastError ?: "unknown"
+                AttentionItem(it.localId, it.filename, code, attentionMessage(code), it.attempts)
+            }
+        val skipped =
+            items
+                .byState(listOf(ItemState.Skipped), MAX_PAGE)
+                .filter { it.pairRole == PairRole.PRIMARY && it.sha256 != null }
+                .map {
+                    AttentionItem(
+                        localId = it.localId,
+                        filename = it.filename,
+                        code = TOMBSTONED,
+                        message = "Deleted from the server earlier, so it is not backed up.",
+                        attempts = it.attempts,
+                        sha256 = it.sha256,
+                    )
+                }
+        return failed + skipped
+    }
 
     /** Puts needs-attention items back in the pipeline with a fresh attempt count. */
     suspend fun retry(localIds: List<String>) {
@@ -432,11 +454,13 @@ class EngineController(
 
     companion object {
         /**
-         * The Pigeon `PauseReason` has no "server identity changed" value; a
-         * persistent pin mismatch pauses with the closest fit and an activity
-         * entry ("server certificate changed — pair again").
+         * A persistent pin mismatch pauses with this reason (with an expiry) and
+         * an activity entry ("server certificate changed — pair again").
          */
-        val UNTRUSTED_PAUSE_REASON = PauseReason.Permission
+        val UNTRUSTED_PAUSE_REASON = PauseReason.ServerCertificateChanged
+
+        /** The attention code of an item skipped because its content was deleted from the server. */
+        const val TOMBSTONED = "tombstoned"
 
         private const val MAX_PAGE = 1000
         private val ACTIVE_STATES =

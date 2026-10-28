@@ -9,4 +9,7 @@ enum class PauseReason {
     Quota,
     ClientTooOld,
     Permission,
+
+    /** Every endpoint refused the stored pin: the server's certificate changed; pair again. */
+    ServerCertificateChanged,
 }

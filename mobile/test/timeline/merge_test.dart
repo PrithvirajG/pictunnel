@@ -33,6 +33,7 @@ PhoneItem _phone(String id, String? sha, DateTime at,
         {ItemState state = ItemState.discovered, bool live = false}) =>
     PhoneItem(
       localId: id,
+      filename: '$id.jpg',
       sha256: sha,
       takenAtMs: at.millisecondsSinceEpoch,
       mime: 'image/jpeg',

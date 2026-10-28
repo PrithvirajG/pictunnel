@@ -20,6 +20,7 @@ BackupStatus status({
   bool paused = false,
   PauseReason? reason,
   int preparing = 0,
+  MediaAccess access = MediaAccess.full,
 }) => BackupStatus(
   backedUp: backedUp,
   total: total,
@@ -31,6 +32,7 @@ BackupStatus status({
   paused: paused,
   pauseReason: reason,
   preparing: preparing,
+  mediaAccess: access,
 );
 
 UploadProgress upload() => UploadProgress(
@@ -43,6 +45,7 @@ UploadProgress upload() => UploadProgress(
 
 PhoneItem queuedItem(int i) => PhoneItem(
   localId: 'q$i',
+  filename: 'IMG_000$i.HEIC',
   takenAtMs: DateTime(2026, 10, 3, 14, i).millisecondsSinceEpoch,
   mime: i.isEven ? 'image/heic' : 'video/mp4',
   size: 1000,
@@ -128,6 +131,7 @@ void main() {
     );
     expect(find.textContaining('80 left · about'), findsOneWidget);
     expect(find.text('UP NEXT'), findsOneWidget);
+    expect(find.text('IMG_0000.HEIC'), findsOneWidget);
     expect(find.text('Wi-Fi only'), findsOneWidget);
     expect(find.text('Videos included'), findsOneWidget);
     expect(find.text('Any battery level'), findsOneWidget);
@@ -166,6 +170,47 @@ void main() {
     await t.pumpAndSettle();
     expect(e.retryCalls.single, ['x']);
     expect(find.text('IMG_1.JPG'), findsNothing);
+  });
+
+  testWidgets('tombstoned item offers back up again', (t) async {
+    final e = engineWith(status(needsAttention: 1));
+    e.attention = [
+      AttentionItem(
+        localId: 'z',
+        filename: 'IMG_9.JPG',
+        code: 'tombstoned',
+        message: 'm',
+        attempts: 0,
+        sha256: 'ab' * 32,
+      ),
+    ];
+    await pumpBackup(t, e);
+    await t.tap(find.text('Needs attention (1)'));
+    await t.pumpAndSettle();
+    expect(find.text('Retry'), findsNothing);
+    await t.tap(find.text('Back up again'));
+    await t.pumpAndSettle();
+    expect(e.undoSkipCalls.single, 'ab' * 32);
+    expect(e.retryCalls, isEmpty);
+    expect(find.text('IMG_9.JPG'), findsNothing);
+  });
+
+  testWidgets('media access comes from the engine status', (t) async {
+    final e = engineWith(status(access: MediaAccess.partial));
+    t.view.physicalSize = const Size(390 * 2, 844 * 2);
+    t.view.devicePixelRatio = 2;
+    addTearDown(t.view.reset);
+    await t.pumpWidget(
+      ProviderScope(
+        overrides: [engineProvider.overrideWithValue(e)],
+        child: MaterialApp(
+          theme: darkroomTheme(),
+          home: const Scaffold(body: BackupScreen()),
+        ),
+      ),
+    );
+    await t.pumpAndSettle();
+    expect(find.text(partialAccessCopy), findsOneWidget);
   });
 
   testWidgets('activity lists newest first', (t) async {
@@ -222,7 +267,7 @@ void main() {
         partialAccessCopy,
       );
       expect(
-        bannerFor(status(), MediaAccess.denied)!.message,
+        bannerFor(status(), MediaAccess.none)!.message,
         pauseReasonCopy['permission'],
       );
       expect(
@@ -267,8 +312,8 @@ void main() {
       expect(asked, 1);
     });
 
-    testWidgets('denied access shows the permission banner', (t) async {
-      await pumpBackup(t, engineWith(status()), access: MediaAccess.denied);
+    testWidgets('no access shows the permission banner', (t) async {
+      await pumpBackup(t, engineWith(status()), access: MediaAccess.none);
       expect(find.text(pauseReasonCopy['permission']!), findsOneWidget);
     });
   });

@@ -85,7 +85,7 @@ class SchedulingTest {
         assertEquals(Scheduling.OFFLINE_RETRY_MS, next(StopReason.Offline))
         assertEquals(30 * min, next(StopReason.Paused, pause = PauseState(PauseReason.ServerFull, now + 30 * min)))
         assertNull(next(StopReason.Paused, pause = PauseState(PauseReason.User, null)))
-        assertEquals(60 * min, next(StopReason.ServerUntrusted, pause = PauseState(PauseReason.Permission, now + 60 * min)))
+        assertEquals(60 * min, next(StopReason.ServerUntrusted, pause = PauseState(PauseReason.ServerCertificateChanged, now + 60 * min)))
         assertNull(next(StopReason.NeedsRepair, now + 1000))
     }
 

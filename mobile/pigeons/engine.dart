@@ -34,6 +34,13 @@ enum PauseReason {
   quota,
   clientTooOld,
   permission,
+  serverCertificateChanged,
+}
+
+enum MediaAccess {
+  full,
+  partial,
+  none,
 }
 
 class PairRequest {
@@ -122,6 +129,7 @@ class BackupStatus {
     this.pauseReason,
     this.lastRunAtMs,
     required this.preparing,
+    required this.mediaAccess,
   });
   int backedUp;
   int total;
@@ -134,6 +142,7 @@ class BackupStatus {
   PauseReason? pauseReason;
   int? lastRunAtMs;
   int preparing;
+  MediaAccess mediaAccess;
 }
 
 class EngineSettings {
@@ -156,6 +165,7 @@ class EngineSettings {
 class PhoneItem {
   PhoneItem({
     required this.localId,
+    required this.filename,
     this.sha256,
     required this.takenAtMs,
     required this.mime,
@@ -168,6 +178,7 @@ class PhoneItem {
     required this.isLivePhoto,
   });
   String localId;
+  String filename;
   String? sha256;
   int takenAtMs;
   String mime;
@@ -199,12 +210,14 @@ class AttentionItem {
     required this.code,
     required this.message,
     required this.attempts,
+    this.sha256,
   });
   String localId;
   String filename;
   String code;
   String message;
   int attempts;
+  String? sha256;
 }
 
 class ActivityEntry {

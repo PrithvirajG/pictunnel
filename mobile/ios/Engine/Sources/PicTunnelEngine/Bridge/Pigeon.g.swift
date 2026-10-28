@@ -209,6 +209,13 @@ enum PauseReason: Int, CaseIterable {
   case quota = 4
   case clientTooOld = 5
   case permission = 6
+  case serverCertificateChanged = 7
+}
+
+enum MediaAccess: Int, CaseIterable {
+  case full = 0
+  case partial = 1
+  case none = 2
 }
 
 /// Generated class from Pigeon that represents data sent in messages.
@@ -494,6 +501,7 @@ struct BackupStatus: Hashable, CustomStringConvertible {
   var pauseReason: PauseReason? = nil
   var lastRunAtMs: Int64? = nil
   var preparing: Int64
+  var mediaAccess: MediaAccess
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -509,6 +517,7 @@ struct BackupStatus: Hashable, CustomStringConvertible {
     let pauseReason: PauseReason? = nilOrValue(pigeonVar_list[8])
     let lastRunAtMs: Int64? = nilOrValue(pigeonVar_list[9])
     let preparing = pigeonVar_list[10] as! Int64
+    let mediaAccess = pigeonVar_list[11] as! MediaAccess
 
     return BackupStatus(
       backedUp: backedUp,
@@ -521,7 +530,8 @@ struct BackupStatus: Hashable, CustomStringConvertible {
       paused: paused,
       pauseReason: pauseReason,
       lastRunAtMs: lastRunAtMs,
-      preparing: preparing
+      preparing: preparing,
+      mediaAccess: mediaAccess
     )
   }
   func toList() -> [Any?] {
@@ -537,13 +547,14 @@ struct BackupStatus: Hashable, CustomStringConvertible {
       pauseReason,
       lastRunAtMs,
       preparing,
+      mediaAccess,
     ]
   }
   static func == (lhs: BackupStatus, rhs: BackupStatus) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return PigeonPigeonInternal.deepEquals(lhs.backedUp, rhs.backedUp) && PigeonPigeonInternal.deepEquals(lhs.total, rhs.total) && PigeonPigeonInternal.deepEquals(lhs.queued, rhs.queued) && PigeonPigeonInternal.deepEquals(lhs.uploading, rhs.uploading) && PigeonPigeonInternal.deepEquals(lhs.needsAttention, rhs.needsAttention) && PigeonPigeonInternal.deepEquals(lhs.skipped, rhs.skipped) && PigeonPigeonInternal.deepEquals(lhs.freeableBytes, rhs.freeableBytes) && PigeonPigeonInternal.deepEquals(lhs.paused, rhs.paused) && PigeonPigeonInternal.deepEquals(lhs.pauseReason, rhs.pauseReason) && PigeonPigeonInternal.deepEquals(lhs.lastRunAtMs, rhs.lastRunAtMs) && PigeonPigeonInternal.deepEquals(lhs.preparing, rhs.preparing)
+    return PigeonPigeonInternal.deepEquals(lhs.backedUp, rhs.backedUp) && PigeonPigeonInternal.deepEquals(lhs.total, rhs.total) && PigeonPigeonInternal.deepEquals(lhs.queued, rhs.queued) && PigeonPigeonInternal.deepEquals(lhs.uploading, rhs.uploading) && PigeonPigeonInternal.deepEquals(lhs.needsAttention, rhs.needsAttention) && PigeonPigeonInternal.deepEquals(lhs.skipped, rhs.skipped) && PigeonPigeonInternal.deepEquals(lhs.freeableBytes, rhs.freeableBytes) && PigeonPigeonInternal.deepEquals(lhs.paused, rhs.paused) && PigeonPigeonInternal.deepEquals(lhs.pauseReason, rhs.pauseReason) && PigeonPigeonInternal.deepEquals(lhs.lastRunAtMs, rhs.lastRunAtMs) && PigeonPigeonInternal.deepEquals(lhs.preparing, rhs.preparing) && PigeonPigeonInternal.deepEquals(lhs.mediaAccess, rhs.mediaAccess)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -559,10 +570,11 @@ struct BackupStatus: Hashable, CustomStringConvertible {
     PigeonPigeonInternal.deepHash(value: pauseReason, hasher: &hasher)
     PigeonPigeonInternal.deepHash(value: lastRunAtMs, hasher: &hasher)
     PigeonPigeonInternal.deepHash(value: preparing, hasher: &hasher)
+    PigeonPigeonInternal.deepHash(value: mediaAccess, hasher: &hasher)
   }
 
   public var description: String {
-    return "BackupStatus(backedUp: \(String(describing: backedUp)), total: \(String(describing: total)), queued: \(String(describing: queued)), uploading: \(String(describing: uploading)), needsAttention: \(String(describing: needsAttention)), skipped: \(String(describing: skipped)), freeableBytes: \(String(describing: freeableBytes)), paused: \(String(describing: paused)), pauseReason: \(String(describing: pauseReason)), lastRunAtMs: \(String(describing: lastRunAtMs)), preparing: \(String(describing: preparing)))"
+    return "BackupStatus(backedUp: \(String(describing: backedUp)), total: \(String(describing: total)), queued: \(String(describing: queued)), uploading: \(String(describing: uploading)), needsAttention: \(String(describing: needsAttention)), skipped: \(String(describing: skipped)), freeableBytes: \(String(describing: freeableBytes)), paused: \(String(describing: paused)), pauseReason: \(String(describing: pauseReason)), lastRunAtMs: \(String(describing: lastRunAtMs)), preparing: \(String(describing: preparing)), mediaAccess: \(String(describing: mediaAccess)))"
   }
 }
 
@@ -629,6 +641,7 @@ struct EngineSettings: Hashable, CustomStringConvertible {
 /// Generated class from Pigeon that represents data sent in messages.
 struct PhoneItem: Hashable, CustomStringConvertible {
   var localId: String
+  var filename: String
   var sha256: String? = nil
   var takenAtMs: Int64
   var mime: String
@@ -644,19 +657,21 @@ struct PhoneItem: Hashable, CustomStringConvertible {
   // swift-format-ignore: AlwaysUseLowerCamelCase
   static func fromList(_ pigeonVar_list: [Any?]) -> PhoneItem? {
     let localId = pigeonVar_list[0] as! String
-    let sha256: String? = nilOrValue(pigeonVar_list[1])
-    let takenAtMs = pigeonVar_list[2] as! Int64
-    let mime = pigeonVar_list[3] as! String
-    let size = pigeonVar_list[4] as! Int64
-    let width: Int64? = nilOrValue(pigeonVar_list[5])
-    let height: Int64? = nilOrValue(pigeonVar_list[6])
-    let durationMs: Int64? = nilOrValue(pigeonVar_list[7])
-    let state = pigeonVar_list[8] as! ItemState
-    let assetId: String? = nilOrValue(pigeonVar_list[9])
-    let isLivePhoto = pigeonVar_list[10] as! Bool
+    let filename = pigeonVar_list[1] as! String
+    let sha256: String? = nilOrValue(pigeonVar_list[2])
+    let takenAtMs = pigeonVar_list[3] as! Int64
+    let mime = pigeonVar_list[4] as! String
+    let size = pigeonVar_list[5] as! Int64
+    let width: Int64? = nilOrValue(pigeonVar_list[6])
+    let height: Int64? = nilOrValue(pigeonVar_list[7])
+    let durationMs: Int64? = nilOrValue(pigeonVar_list[8])
+    let state = pigeonVar_list[9] as! ItemState
+    let assetId: String? = nilOrValue(pigeonVar_list[10])
+    let isLivePhoto = pigeonVar_list[11] as! Bool
 
     return PhoneItem(
       localId: localId,
+      filename: filename,
       sha256: sha256,
       takenAtMs: takenAtMs,
       mime: mime,
@@ -672,6 +687,7 @@ struct PhoneItem: Hashable, CustomStringConvertible {
   func toList() -> [Any?] {
     return [
       localId,
+      filename,
       sha256,
       takenAtMs,
       mime,
@@ -688,12 +704,13 @@ struct PhoneItem: Hashable, CustomStringConvertible {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return PigeonPigeonInternal.deepEquals(lhs.localId, rhs.localId) && PigeonPigeonInternal.deepEquals(lhs.sha256, rhs.sha256) && PigeonPigeonInternal.deepEquals(lhs.takenAtMs, rhs.takenAtMs) && PigeonPigeonInternal.deepEquals(lhs.mime, rhs.mime) && PigeonPigeonInternal.deepEquals(lhs.size, rhs.size) && PigeonPigeonInternal.deepEquals(lhs.width, rhs.width) && PigeonPigeonInternal.deepEquals(lhs.height, rhs.height) && PigeonPigeonInternal.deepEquals(lhs.durationMs, rhs.durationMs) && PigeonPigeonInternal.deepEquals(lhs.state, rhs.state) && PigeonPigeonInternal.deepEquals(lhs.assetId, rhs.assetId) && PigeonPigeonInternal.deepEquals(lhs.isLivePhoto, rhs.isLivePhoto)
+    return PigeonPigeonInternal.deepEquals(lhs.localId, rhs.localId) && PigeonPigeonInternal.deepEquals(lhs.filename, rhs.filename) && PigeonPigeonInternal.deepEquals(lhs.sha256, rhs.sha256) && PigeonPigeonInternal.deepEquals(lhs.takenAtMs, rhs.takenAtMs) && PigeonPigeonInternal.deepEquals(lhs.mime, rhs.mime) && PigeonPigeonInternal.deepEquals(lhs.size, rhs.size) && PigeonPigeonInternal.deepEquals(lhs.width, rhs.width) && PigeonPigeonInternal.deepEquals(lhs.height, rhs.height) && PigeonPigeonInternal.deepEquals(lhs.durationMs, rhs.durationMs) && PigeonPigeonInternal.deepEquals(lhs.state, rhs.state) && PigeonPigeonInternal.deepEquals(lhs.assetId, rhs.assetId) && PigeonPigeonInternal.deepEquals(lhs.isLivePhoto, rhs.isLivePhoto)
   }
 
   func hash(into hasher: inout Hasher) {
     hasher.combine("PhoneItem")
     PigeonPigeonInternal.deepHash(value: localId, hasher: &hasher)
+    PigeonPigeonInternal.deepHash(value: filename, hasher: &hasher)
     PigeonPigeonInternal.deepHash(value: sha256, hasher: &hasher)
     PigeonPigeonInternal.deepHash(value: takenAtMs, hasher: &hasher)
     PigeonPigeonInternal.deepHash(value: mime, hasher: &hasher)
@@ -707,7 +724,7 @@ struct PhoneItem: Hashable, CustomStringConvertible {
   }
 
   public var description: String {
-    return "PhoneItem(localId: \(String(describing: localId)), sha256: \(String(describing: sha256)), takenAtMs: \(String(describing: takenAtMs)), mime: \(String(describing: mime)), size: \(String(describing: size)), width: \(String(describing: width)), height: \(String(describing: height)), durationMs: \(String(describing: durationMs)), state: \(String(describing: state)), assetId: \(String(describing: assetId)), isLivePhoto: \(String(describing: isLivePhoto)))"
+    return "PhoneItem(localId: \(String(describing: localId)), filename: \(String(describing: filename)), sha256: \(String(describing: sha256)), takenAtMs: \(String(describing: takenAtMs)), mime: \(String(describing: mime)), size: \(String(describing: size)), width: \(String(describing: width)), height: \(String(describing: height)), durationMs: \(String(describing: durationMs)), state: \(String(describing: state)), assetId: \(String(describing: assetId)), isLivePhoto: \(String(describing: isLivePhoto)))"
   }
 }
 
@@ -798,6 +815,7 @@ struct AttentionItem: Hashable, CustomStringConvertible {
   var code: String
   var message: String
   var attempts: Int64
+  var sha256: String? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -807,13 +825,15 @@ struct AttentionItem: Hashable, CustomStringConvertible {
     let code = pigeonVar_list[2] as! String
     let message = pigeonVar_list[3] as! String
     let attempts = pigeonVar_list[4] as! Int64
+    let sha256: String? = nilOrValue(pigeonVar_list[5])
 
     return AttentionItem(
       localId: localId,
       filename: filename,
       code: code,
       message: message,
-      attempts: attempts
+      attempts: attempts,
+      sha256: sha256
     )
   }
   func toList() -> [Any?] {
@@ -823,13 +843,14 @@ struct AttentionItem: Hashable, CustomStringConvertible {
       code,
       message,
       attempts,
+      sha256,
     ]
   }
   static func == (lhs: AttentionItem, rhs: AttentionItem) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return PigeonPigeonInternal.deepEquals(lhs.localId, rhs.localId) && PigeonPigeonInternal.deepEquals(lhs.filename, rhs.filename) && PigeonPigeonInternal.deepEquals(lhs.code, rhs.code) && PigeonPigeonInternal.deepEquals(lhs.message, rhs.message) && PigeonPigeonInternal.deepEquals(lhs.attempts, rhs.attempts)
+    return PigeonPigeonInternal.deepEquals(lhs.localId, rhs.localId) && PigeonPigeonInternal.deepEquals(lhs.filename, rhs.filename) && PigeonPigeonInternal.deepEquals(lhs.code, rhs.code) && PigeonPigeonInternal.deepEquals(lhs.message, rhs.message) && PigeonPigeonInternal.deepEquals(lhs.attempts, rhs.attempts) && PigeonPigeonInternal.deepEquals(lhs.sha256, rhs.sha256)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -839,10 +860,11 @@ struct AttentionItem: Hashable, CustomStringConvertible {
     PigeonPigeonInternal.deepHash(value: code, hasher: &hasher)
     PigeonPigeonInternal.deepHash(value: message, hasher: &hasher)
     PigeonPigeonInternal.deepHash(value: attempts, hasher: &hasher)
+    PigeonPigeonInternal.deepHash(value: sha256, hasher: &hasher)
   }
 
   public var description: String {
-    return "AttentionItem(localId: \(String(describing: localId)), filename: \(String(describing: filename)), code: \(String(describing: code)), message: \(String(describing: message)), attempts: \(String(describing: attempts)))"
+    return "AttentionItem(localId: \(String(describing: localId)), filename: \(String(describing: filename)), code: \(String(describing: code)), message: \(String(describing: message)), attempts: \(String(describing: attempts)), sha256: \(String(describing: sha256)))"
   }
 }
 
@@ -1042,34 +1064,40 @@ private class PigeonPigeonCodecReader: FlutterStandardReader {
       }
       return nil
     case 131:
-      return PairRequest.fromList(self.readValue() as! [Any?])
+      let enumResultAsInt: Int? = nilOrValue(self.readValue() as! Int?)
+      if let enumResultAsInt = enumResultAsInt {
+        return MediaAccess(rawValue: enumResultAsInt)
+      }
+      return nil
     case 132:
-      return PairResult.fromList(self.readValue() as! [Any?])
+      return PairRequest.fromList(self.readValue() as! [Any?])
     case 133:
-      return ServerIdentity.fromList(self.readValue() as! [Any?])
+      return PairResult.fromList(self.readValue() as! [Any?])
     case 134:
-      return ServerConnection.fromList(self.readValue() as! [Any?])
+      return ServerIdentity.fromList(self.readValue() as! [Any?])
     case 135:
-      return UploadProgress.fromList(self.readValue() as! [Any?])
+      return ServerConnection.fromList(self.readValue() as! [Any?])
     case 136:
-      return BackupStatus.fromList(self.readValue() as! [Any?])
+      return UploadProgress.fromList(self.readValue() as! [Any?])
     case 137:
-      return EngineSettings.fromList(self.readValue() as! [Any?])
+      return BackupStatus.fromList(self.readValue() as! [Any?])
     case 138:
-      return PhoneItem.fromList(self.readValue() as! [Any?])
+      return EngineSettings.fromList(self.readValue() as! [Any?])
     case 139:
-      return PageRequest.fromList(self.readValue() as! [Any?])
+      return PhoneItem.fromList(self.readValue() as! [Any?])
     case 140:
-      return PhoneItemPage.fromList(self.readValue() as! [Any?])
+      return PageRequest.fromList(self.readValue() as! [Any?])
     case 141:
-      return AttentionItem.fromList(self.readValue() as! [Any?])
+      return PhoneItemPage.fromList(self.readValue() as! [Any?])
     case 142:
-      return ActivityEntry.fromList(self.readValue() as! [Any?])
+      return AttentionItem.fromList(self.readValue() as! [Any?])
     case 143:
-      return SkippedFree.fromList(self.readValue() as! [Any?])
+      return ActivityEntry.fromList(self.readValue() as! [Any?])
     case 144:
-      return FreeUpResult.fromList(self.readValue() as! [Any?])
+      return SkippedFree.fromList(self.readValue() as! [Any?])
     case 145:
+      return FreeUpResult.fromList(self.readValue() as! [Any?])
+    case 146:
       return AlbumInfo.fromList(self.readValue() as! [Any?])
     default:
       return super.readValue(ofType: type)
@@ -1085,50 +1113,53 @@ private class PigeonPigeonCodecWriter: FlutterStandardWriter {
     } else if let value = value as? PauseReason {
       super.writeByte(130)
       super.writeValue(value.rawValue)
-    } else if let value = value as? PairRequest {
+    } else if let value = value as? MediaAccess {
       super.writeByte(131)
-      super.writeValue(value.toList())
-    } else if let value = value as? PairResult {
+      super.writeValue(value.rawValue)
+    } else if let value = value as? PairRequest {
       super.writeByte(132)
       super.writeValue(value.toList())
-    } else if let value = value as? ServerIdentity {
+    } else if let value = value as? PairResult {
       super.writeByte(133)
       super.writeValue(value.toList())
-    } else if let value = value as? ServerConnection {
+    } else if let value = value as? ServerIdentity {
       super.writeByte(134)
       super.writeValue(value.toList())
-    } else if let value = value as? UploadProgress {
+    } else if let value = value as? ServerConnection {
       super.writeByte(135)
       super.writeValue(value.toList())
-    } else if let value = value as? BackupStatus {
+    } else if let value = value as? UploadProgress {
       super.writeByte(136)
       super.writeValue(value.toList())
-    } else if let value = value as? EngineSettings {
+    } else if let value = value as? BackupStatus {
       super.writeByte(137)
       super.writeValue(value.toList())
-    } else if let value = value as? PhoneItem {
+    } else if let value = value as? EngineSettings {
       super.writeByte(138)
       super.writeValue(value.toList())
-    } else if let value = value as? PageRequest {
+    } else if let value = value as? PhoneItem {
       super.writeByte(139)
       super.writeValue(value.toList())
-    } else if let value = value as? PhoneItemPage {
+    } else if let value = value as? PageRequest {
       super.writeByte(140)
       super.writeValue(value.toList())
-    } else if let value = value as? AttentionItem {
+    } else if let value = value as? PhoneItemPage {
       super.writeByte(141)
       super.writeValue(value.toList())
-    } else if let value = value as? ActivityEntry {
+    } else if let value = value as? AttentionItem {
       super.writeByte(142)
       super.writeValue(value.toList())
-    } else if let value = value as? SkippedFree {
+    } else if let value = value as? ActivityEntry {
       super.writeByte(143)
       super.writeValue(value.toList())
-    } else if let value = value as? FreeUpResult {
+    } else if let value = value as? SkippedFree {
       super.writeByte(144)
       super.writeValue(value.toList())
-    } else if let value = value as? AlbumInfo {
+    } else if let value = value as? FreeUpResult {
       super.writeByte(145)
+      super.writeValue(value.toList())
+    } else if let value = value as? AlbumInfo {
+      super.writeByte(146)
       super.writeValue(value.toList())
     } else {
       super.writeValue(value)

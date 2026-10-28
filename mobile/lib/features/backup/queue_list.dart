@@ -44,7 +44,7 @@ class QueueList extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    _name(item),
+                    item.filename.isEmpty ? _fallbackName(item) : item.filename,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: bodyStyle(size: 15),
@@ -61,8 +61,8 @@ class QueueList extends StatelessWidget {
     );
   }
 
-  /// The engine reports no file name for queued items, so show kind and date.
-  String _name(PhoneItem i) {
+  /// Shown when the platform knows no file name: kind and date.
+  String _fallbackName(PhoneItem i) {
     final kind = i.mime.startsWith('video/') ? 'Video' : 'Photo';
     return '$kind · ${_when.format(DateTime.fromMillisecondsSinceEpoch(i.takenAtMs))}';
   }

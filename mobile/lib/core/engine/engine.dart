@@ -16,6 +16,7 @@ export 'pigeon.g.dart'
         BackupStatus,
         EngineSettings,
         ItemState,
+        MediaAccess,
         PageRequest,
         PairRequest,
         PairResult,
@@ -44,6 +45,9 @@ abstract interface class Engine {
   Future<List<AttentionItem>> listAttention();
   Future<void> retry(List<String> localIds);
   Future<List<ActivityEntry>> listActivity(int limit);
+
+  /// "Back up again" for content deleted from the server (a tombstone).
+  Future<void> undoSkip(String sha256);
 
   /// Throttled by the engine to at most 4 per second.
   Stream<BackupStatus> get status$;
@@ -116,6 +120,8 @@ class PigeonEngine implements Engine, EngineEventsApi {
   @override
   Future<List<ActivityEntry>> listActivity(int limit) =>
       _host.listActivity(limit);
+  @override
+  Future<void> undoSkip(String sha256) => _host.undoSkip(sha256);
 
   void dispose() {
     EngineEventsApi.setUp(null);

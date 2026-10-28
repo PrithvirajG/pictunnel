@@ -8,7 +8,7 @@ import '../../core/engine/engine.dart';
 import 'backup_providers.dart';
 
 /// Banner copy keyed by `PauseReason.name` (spec M§8). Adding a reason is one
-/// line; `serverCertificateChanged` is here before the enum value exists.
+/// line.
 const pauseReasonCopy = <String, String>{
   'user': 'Backup is paused.',
   'wifiRequired': 'Waiting for Wi-Fi. Backup resumes when you connect.',
@@ -59,7 +59,7 @@ BannerSpec? bannerFor(BackupStatus status, MediaAccess access) {
     };
   }
   return switch (access) {
-    MediaAccess.denied => BannerSpec(
+    MediaAccess.none => BannerSpec(
       pauseReasonCopy['permission']!,
       BannerAction.allowFullAccess,
       'Allow access',

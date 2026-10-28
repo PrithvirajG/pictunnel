@@ -99,6 +99,7 @@ data class BackupStatus(
     val pauseReason: PauseReason?,
     val lastRunAtMs: Long?,
     val preparing: Int,
+    val mediaAccess: MediaAccess = MediaAccess.Full,
 )
 
 data class SkippedFree(
@@ -124,6 +125,8 @@ data class AttentionItem(
     val code: String,
     val message: String,
     val attempts: Int,
+    /** Set only for skipped (tombstoned) items: the content to "Back up again" with `undoSkip`. */
+    val sha256: String? = null,
 )
 
 /**

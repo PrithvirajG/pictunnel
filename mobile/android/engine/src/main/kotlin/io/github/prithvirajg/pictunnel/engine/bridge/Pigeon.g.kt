@@ -221,10 +221,23 @@ enum class PauseReason(val raw: Int) {
   SERVER_FULL(3),
   QUOTA(4),
   CLIENT_TOO_OLD(5),
-  PERMISSION(6);
+  PERMISSION(6),
+  SERVER_CERTIFICATE_CHANGED(7);
 
   companion object {
     fun ofRaw(raw: Int): PauseReason? {
+      return values().firstOrNull { it.raw == raw }
+    }
+  }
+}
+
+enum class MediaAccess(val raw: Int) {
+  FULL(0),
+  PARTIAL(1),
+  NONE(2);
+
+  companion object {
+    fun ofRaw(raw: Int): MediaAccess? {
       return values().firstOrNull { it.raw == raw }
     }
   }
@@ -503,7 +516,8 @@ data class BackupStatus (
   val paused: Boolean,
   val pauseReason: PauseReason? = null,
   val lastRunAtMs: Long? = null,
-  val preparing: Long
+  val preparing: Long,
+  val mediaAccess: MediaAccess
 )
  {
   companion object {
@@ -519,7 +533,8 @@ data class BackupStatus (
       val pauseReason = pigeonVar_list[8] as PauseReason?
       val lastRunAtMs = pigeonVar_list[9] as Long?
       val preparing = pigeonVar_list[10] as Long
-      return BackupStatus(backedUp, total, queued, uploading, needsAttention, skipped, freeableBytes, paused, pauseReason, lastRunAtMs, preparing)
+      val mediaAccess = pigeonVar_list[11] as MediaAccess
+      return BackupStatus(backedUp, total, queued, uploading, needsAttention, skipped, freeableBytes, paused, pauseReason, lastRunAtMs, preparing, mediaAccess)
     }
   }
   fun toList(): List<Any?> {
@@ -535,6 +550,7 @@ data class BackupStatus (
       pauseReason,
       lastRunAtMs,
       preparing,
+      mediaAccess,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -545,7 +561,7 @@ data class BackupStatus (
       return true
     }
     val other = other as BackupStatus
-    return PigeonPigeonUtils.deepEquals(this.backedUp, other.backedUp) && PigeonPigeonUtils.deepEquals(this.total, other.total) && PigeonPigeonUtils.deepEquals(this.queued, other.queued) && PigeonPigeonUtils.deepEquals(this.uploading, other.uploading) && PigeonPigeonUtils.deepEquals(this.needsAttention, other.needsAttention) && PigeonPigeonUtils.deepEquals(this.skipped, other.skipped) && PigeonPigeonUtils.deepEquals(this.freeableBytes, other.freeableBytes) && PigeonPigeonUtils.deepEquals(this.paused, other.paused) && PigeonPigeonUtils.deepEquals(this.pauseReason, other.pauseReason) && PigeonPigeonUtils.deepEquals(this.lastRunAtMs, other.lastRunAtMs) && PigeonPigeonUtils.deepEquals(this.preparing, other.preparing)
+    return PigeonPigeonUtils.deepEquals(this.backedUp, other.backedUp) && PigeonPigeonUtils.deepEquals(this.total, other.total) && PigeonPigeonUtils.deepEquals(this.queued, other.queued) && PigeonPigeonUtils.deepEquals(this.uploading, other.uploading) && PigeonPigeonUtils.deepEquals(this.needsAttention, other.needsAttention) && PigeonPigeonUtils.deepEquals(this.skipped, other.skipped) && PigeonPigeonUtils.deepEquals(this.freeableBytes, other.freeableBytes) && PigeonPigeonUtils.deepEquals(this.paused, other.paused) && PigeonPigeonUtils.deepEquals(this.pauseReason, other.pauseReason) && PigeonPigeonUtils.deepEquals(this.lastRunAtMs, other.lastRunAtMs) && PigeonPigeonUtils.deepEquals(this.preparing, other.preparing) && PigeonPigeonUtils.deepEquals(this.mediaAccess, other.mediaAccess)
   }
 
   override fun hashCode(): Int {
@@ -561,10 +577,11 @@ data class BackupStatus (
     result = 31 * result + PigeonPigeonUtils.deepHash(this.pauseReason)
     result = 31 * result + PigeonPigeonUtils.deepHash(this.lastRunAtMs)
     result = 31 * result + PigeonPigeonUtils.deepHash(this.preparing)
+    result = 31 * result + PigeonPigeonUtils.deepHash(this.mediaAccess)
     return result
   }
   override fun toString(): String {
-    return "BackupStatus(backedUp=$backedUp, total=$total, queued=$queued, uploading=$uploading, needsAttention=$needsAttention, skipped=$skipped, freeableBytes=$freeableBytes, paused=$paused, pauseReason=$pauseReason, lastRunAtMs=$lastRunAtMs, preparing=$preparing)"
+    return "BackupStatus(backedUp=$backedUp, total=$total, queued=$queued, uploading=$uploading, needsAttention=$needsAttention, skipped=$skipped, freeableBytes=$freeableBytes, paused=$paused, pauseReason=$pauseReason, lastRunAtMs=$lastRunAtMs, preparing=$preparing, mediaAccess=$mediaAccess)"
   }
 }
 
@@ -628,6 +645,7 @@ data class EngineSettings (
 /** Generated class from Pigeon that represents data sent in messages. */
 data class PhoneItem (
   val localId: String,
+  val filename: String,
   val sha256: String? = null,
   val takenAtMs: Long,
   val mime: String,
@@ -643,22 +661,24 @@ data class PhoneItem (
   companion object {
     fun fromList(pigeonVar_list: List<Any?>): PhoneItem {
       val localId = pigeonVar_list[0] as String
-      val sha256 = pigeonVar_list[1] as String?
-      val takenAtMs = pigeonVar_list[2] as Long
-      val mime = pigeonVar_list[3] as String
-      val size = pigeonVar_list[4] as Long
-      val width = pigeonVar_list[5] as Long?
-      val height = pigeonVar_list[6] as Long?
-      val durationMs = pigeonVar_list[7] as Long?
-      val state = pigeonVar_list[8] as ItemState
-      val assetId = pigeonVar_list[9] as String?
-      val isLivePhoto = pigeonVar_list[10] as Boolean
-      return PhoneItem(localId, sha256, takenAtMs, mime, size, width, height, durationMs, state, assetId, isLivePhoto)
+      val filename = pigeonVar_list[1] as String
+      val sha256 = pigeonVar_list[2] as String?
+      val takenAtMs = pigeonVar_list[3] as Long
+      val mime = pigeonVar_list[4] as String
+      val size = pigeonVar_list[5] as Long
+      val width = pigeonVar_list[6] as Long?
+      val height = pigeonVar_list[7] as Long?
+      val durationMs = pigeonVar_list[8] as Long?
+      val state = pigeonVar_list[9] as ItemState
+      val assetId = pigeonVar_list[10] as String?
+      val isLivePhoto = pigeonVar_list[11] as Boolean
+      return PhoneItem(localId, filename, sha256, takenAtMs, mime, size, width, height, durationMs, state, assetId, isLivePhoto)
     }
   }
   fun toList(): List<Any?> {
     return listOf(
       localId,
+      filename,
       sha256,
       takenAtMs,
       mime,
@@ -679,12 +699,13 @@ data class PhoneItem (
       return true
     }
     val other = other as PhoneItem
-    return PigeonPigeonUtils.deepEquals(this.localId, other.localId) && PigeonPigeonUtils.deepEquals(this.sha256, other.sha256) && PigeonPigeonUtils.deepEquals(this.takenAtMs, other.takenAtMs) && PigeonPigeonUtils.deepEquals(this.mime, other.mime) && PigeonPigeonUtils.deepEquals(this.size, other.size) && PigeonPigeonUtils.deepEquals(this.width, other.width) && PigeonPigeonUtils.deepEquals(this.height, other.height) && PigeonPigeonUtils.deepEquals(this.durationMs, other.durationMs) && PigeonPigeonUtils.deepEquals(this.state, other.state) && PigeonPigeonUtils.deepEquals(this.assetId, other.assetId) && PigeonPigeonUtils.deepEquals(this.isLivePhoto, other.isLivePhoto)
+    return PigeonPigeonUtils.deepEquals(this.localId, other.localId) && PigeonPigeonUtils.deepEquals(this.filename, other.filename) && PigeonPigeonUtils.deepEquals(this.sha256, other.sha256) && PigeonPigeonUtils.deepEquals(this.takenAtMs, other.takenAtMs) && PigeonPigeonUtils.deepEquals(this.mime, other.mime) && PigeonPigeonUtils.deepEquals(this.size, other.size) && PigeonPigeonUtils.deepEquals(this.width, other.width) && PigeonPigeonUtils.deepEquals(this.height, other.height) && PigeonPigeonUtils.deepEquals(this.durationMs, other.durationMs) && PigeonPigeonUtils.deepEquals(this.state, other.state) && PigeonPigeonUtils.deepEquals(this.assetId, other.assetId) && PigeonPigeonUtils.deepEquals(this.isLivePhoto, other.isLivePhoto)
   }
 
   override fun hashCode(): Int {
     var result = javaClass.hashCode()
     result = 31 * result + PigeonPigeonUtils.deepHash(this.localId)
+    result = 31 * result + PigeonPigeonUtils.deepHash(this.filename)
     result = 31 * result + PigeonPigeonUtils.deepHash(this.sha256)
     result = 31 * result + PigeonPigeonUtils.deepHash(this.takenAtMs)
     result = 31 * result + PigeonPigeonUtils.deepHash(this.mime)
@@ -698,7 +719,7 @@ data class PhoneItem (
     return result
   }
   override fun toString(): String {
-    return "PhoneItem(localId=$localId, sha256=$sha256, takenAtMs=$takenAtMs, mime=$mime, size=$size, width=$width, height=$height, durationMs=$durationMs, state=$state, assetId=$assetId, isLivePhoto=$isLivePhoto)"
+    return "PhoneItem(localId=$localId, filename=$filename, sha256=$sha256, takenAtMs=$takenAtMs, mime=$mime, size=$size, width=$width, height=$height, durationMs=$durationMs, state=$state, assetId=$assetId, isLivePhoto=$isLivePhoto)"
   }
 }
 
@@ -790,7 +811,8 @@ data class AttentionItem (
   val filename: String,
   val code: String,
   val message: String,
-  val attempts: Long
+  val attempts: Long,
+  val sha256: String? = null
 )
  {
   companion object {
@@ -800,7 +822,8 @@ data class AttentionItem (
       val code = pigeonVar_list[2] as String
       val message = pigeonVar_list[3] as String
       val attempts = pigeonVar_list[4] as Long
-      return AttentionItem(localId, filename, code, message, attempts)
+      val sha256 = pigeonVar_list[5] as String?
+      return AttentionItem(localId, filename, code, message, attempts, sha256)
     }
   }
   fun toList(): List<Any?> {
@@ -810,6 +833,7 @@ data class AttentionItem (
       code,
       message,
       attempts,
+      sha256,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -820,7 +844,7 @@ data class AttentionItem (
       return true
     }
     val other = other as AttentionItem
-    return PigeonPigeonUtils.deepEquals(this.localId, other.localId) && PigeonPigeonUtils.deepEquals(this.filename, other.filename) && PigeonPigeonUtils.deepEquals(this.code, other.code) && PigeonPigeonUtils.deepEquals(this.message, other.message) && PigeonPigeonUtils.deepEquals(this.attempts, other.attempts)
+    return PigeonPigeonUtils.deepEquals(this.localId, other.localId) && PigeonPigeonUtils.deepEquals(this.filename, other.filename) && PigeonPigeonUtils.deepEquals(this.code, other.code) && PigeonPigeonUtils.deepEquals(this.message, other.message) && PigeonPigeonUtils.deepEquals(this.attempts, other.attempts) && PigeonPigeonUtils.deepEquals(this.sha256, other.sha256)
   }
 
   override fun hashCode(): Int {
@@ -830,10 +854,11 @@ data class AttentionItem (
     result = 31 * result + PigeonPigeonUtils.deepHash(this.code)
     result = 31 * result + PigeonPigeonUtils.deepHash(this.message)
     result = 31 * result + PigeonPigeonUtils.deepHash(this.attempts)
+    result = 31 * result + PigeonPigeonUtils.deepHash(this.sha256)
     return result
   }
   override fun toString(): String {
-    return "AttentionItem(localId=$localId, filename=$filename, code=$code, message=$message, attempts=$attempts)"
+    return "AttentionItem(localId=$localId, filename=$filename, code=$code, message=$message, attempts=$attempts, sha256=$sha256)"
   }
 }
 
@@ -1030,76 +1055,81 @@ private open class PigeonPigeonCodec : StandardMessageCodec() {
         }
       }
       131.toByte() -> {
-        return (readValue(buffer) as? List<Any?>)?.let {
-          PairRequest.fromList(it)
+        return (readValue(buffer) as Long?)?.let {
+          MediaAccess.ofRaw(it.toInt())
         }
       }
       132.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          PairResult.fromList(it)
+          PairRequest.fromList(it)
         }
       }
       133.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          ServerIdentity.fromList(it)
+          PairResult.fromList(it)
         }
       }
       134.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          ServerConnection.fromList(it)
+          ServerIdentity.fromList(it)
         }
       }
       135.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          UploadProgress.fromList(it)
+          ServerConnection.fromList(it)
         }
       }
       136.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          BackupStatus.fromList(it)
+          UploadProgress.fromList(it)
         }
       }
       137.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          EngineSettings.fromList(it)
+          BackupStatus.fromList(it)
         }
       }
       138.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          PhoneItem.fromList(it)
+          EngineSettings.fromList(it)
         }
       }
       139.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          PageRequest.fromList(it)
+          PhoneItem.fromList(it)
         }
       }
       140.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          PhoneItemPage.fromList(it)
+          PageRequest.fromList(it)
         }
       }
       141.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          AttentionItem.fromList(it)
+          PhoneItemPage.fromList(it)
         }
       }
       142.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          ActivityEntry.fromList(it)
+          AttentionItem.fromList(it)
         }
       }
       143.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          SkippedFree.fromList(it)
+          ActivityEntry.fromList(it)
         }
       }
       144.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          FreeUpResult.fromList(it)
+          SkippedFree.fromList(it)
         }
       }
       145.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          FreeUpResult.fromList(it)
+        }
+      }
+      146.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
           AlbumInfo.fromList(it)
         }
@@ -1117,64 +1147,68 @@ private open class PigeonPigeonCodec : StandardMessageCodec() {
         stream.write(130)
         writeValue(stream, value.raw.toLong())
       }
-      is PairRequest -> {
+      is MediaAccess -> {
         stream.write(131)
-        writeValue(stream, value.toList())
+        writeValue(stream, value.raw.toLong())
       }
-      is PairResult -> {
+      is PairRequest -> {
         stream.write(132)
         writeValue(stream, value.toList())
       }
-      is ServerIdentity -> {
+      is PairResult -> {
         stream.write(133)
         writeValue(stream, value.toList())
       }
-      is ServerConnection -> {
+      is ServerIdentity -> {
         stream.write(134)
         writeValue(stream, value.toList())
       }
-      is UploadProgress -> {
+      is ServerConnection -> {
         stream.write(135)
         writeValue(stream, value.toList())
       }
-      is BackupStatus -> {
+      is UploadProgress -> {
         stream.write(136)
         writeValue(stream, value.toList())
       }
-      is EngineSettings -> {
+      is BackupStatus -> {
         stream.write(137)
         writeValue(stream, value.toList())
       }
-      is PhoneItem -> {
+      is EngineSettings -> {
         stream.write(138)
         writeValue(stream, value.toList())
       }
-      is PageRequest -> {
+      is PhoneItem -> {
         stream.write(139)
         writeValue(stream, value.toList())
       }
-      is PhoneItemPage -> {
+      is PageRequest -> {
         stream.write(140)
         writeValue(stream, value.toList())
       }
-      is AttentionItem -> {
+      is PhoneItemPage -> {
         stream.write(141)
         writeValue(stream, value.toList())
       }
-      is ActivityEntry -> {
+      is AttentionItem -> {
         stream.write(142)
         writeValue(stream, value.toList())
       }
-      is SkippedFree -> {
+      is ActivityEntry -> {
         stream.write(143)
         writeValue(stream, value.toList())
       }
-      is FreeUpResult -> {
+      is SkippedFree -> {
         stream.write(144)
         writeValue(stream, value.toList())
       }
-      is AlbumInfo -> {
+      is FreeUpResult -> {
         stream.write(145)
+        writeValue(stream, value.toList())
+      }
+      is AlbumInfo -> {
+        stream.write(146)
         writeValue(stream, value.toList())
       }
       else -> super.writeValue(stream, value)
