@@ -100,7 +100,7 @@ class FakeScanner(
 ) : Scanner {
     var scans = 0
 
-    override suspend fun scan(since: ScanCursor?): ScanResult {
+    override suspend fun scan(since: List<ScanCursor>): ScanResult {
         scans++
         val items =
             media.bytes.keys.toList().mapIndexed { i, id ->
@@ -114,7 +114,7 @@ class FakeScanner(
                     filename = "$id.jpg",
                 )
             }
-        return ScanResult(items, emptyList(), ScanCursor("external", scans.toLong(), "v1"), fullRescan = true)
+        return ScanResult(items, emptyList(), listOf(ScanCursor("external", scans.toLong(), "v1")), fullRescan = true)
     }
 }
 

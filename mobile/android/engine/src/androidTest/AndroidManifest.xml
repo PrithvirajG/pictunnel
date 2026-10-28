@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Hosts the system delete dialog in deleteRequestShowsSystemDialog. -->
+        <activity
+            android:name="io.github.prithvirajg.pictunnel.engine.HostActivity"
+            android:exported="false" />
+    </application>
+</manifest>

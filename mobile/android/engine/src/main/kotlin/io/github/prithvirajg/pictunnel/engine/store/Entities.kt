@@ -92,3 +92,9 @@ data class StateCounts(
 
     operator fun get(state: ItemState): Int = byState[state] ?: 0
 }
+
+/** A count of items and their total size. */
+data class CountAndBytes(
+    @ColumnInfo(name = "count") val count: Int,
+    @ColumnInfo(name = "bytes") val bytes: Long,
+)

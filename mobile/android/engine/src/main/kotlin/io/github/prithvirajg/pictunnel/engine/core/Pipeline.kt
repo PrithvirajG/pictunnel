@@ -29,6 +29,7 @@ import io.github.prithvirajg.pictunnel.engine.store.EngineDb
 import io.github.prithvirajg.pictunnel.engine.store.HashCacheEntity
 import io.github.prithvirajg.pictunnel.engine.store.ItemEntity
 import io.github.prithvirajg.pictunnel.engine.store.ScanStateEntity
+import androidx.room.withTransaction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -136,8 +137,8 @@ internal class Pipeline(
         ctx: RunCtx,
         scanner: Scanner,
     ) {
-        val cursor = db.scanState().all().firstOrNull()?.let { ScanCursor(it.volume, it.generation, it.volumeVersion) }
-        val r = scanner.scan(cursor)
+        val cursors = db.scanState().all().map { ScanCursor(it.volume, it.generation, it.volumeVersion) }
+        val r = scanner.scan(cursors)
         val writes = ArrayList<ItemEntity>()
         for (s in r.changed) {
             val existing = items.get(s.localId)
@@ -168,12 +169,22 @@ internal class Pipeline(
         writes.chunked(BATCH).forEach { items.upsertAll(it) }
         // Deleted on the phone: dropped from the index only, never sent to the server (R8).
         val gone = r.removed.toMutableSet()
-        if (r.fullRescan) gone += items.allIds().toSet() - r.changed.mapTo(HashSet()) { it.localId }
+        if (r.fullRescan) {
+            gone += items.allIds().toSet() - r.changed.mapTo(HashSet()) { it.localId }
+        } else {
+            r.presentIds?.let { present -> gone += items.allIds().filterNot { it in present } }
+        }
         gone.chunked(BATCH).forEach {
             items.delete(it)
             hashCache.delete(it)
         }
-        r.cursor?.let { db.scanState().put(ScanStateEntity(it.volume, it.generation, it.volumeVersion)) }
+        if (r.cursors != cursors) {
+            // One cursor per volume; a volume that went away loses its cursor.
+            db.withTransaction {
+                db.scanState().clear()
+                r.cursors.forEach { db.scanState().put(ScanStateEntity(it.volume, it.generation, it.volumeVersion)) }
+            }
+        }
         ctx.scanned.addAndGet(r.changed.size)
     }
 

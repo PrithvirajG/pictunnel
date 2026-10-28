@@ -17,6 +17,7 @@ import io.github.prithvirajg.pictunnel.engine.store.ActivityEntity
 import io.github.prithvirajg.pictunnel.engine.store.EngineDb
 import io.github.prithvirajg.pictunnel.engine.store.ItemEntity
 import kotlinx.coroutines.CancellationException
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -36,12 +37,15 @@ class EngineController(
     private val clock: Clock,
     private val events: EngineEvents,
     private val config: EngineConfig = EngineConfig(),
-) {
+) : BackupEngine {
     private val items = db.items()
     private val log = ActivityLog(db.activity(), clock)
     private val reporter = StatusReporter(items, settings, clock, events)
     private val pipeline = Pipeline(db, media, client, settings, clock, events, log, reporter, config)
     private val runLock = Mutex()
+
+    /** A scan asked for while a run held the engine; the run performs it before its next pass. */
+    private val rescanRequested = AtomicBoolean(false)
 
     /**
      * Scan → hash → check → upload until nothing is due, the [budget] runs out,
@@ -49,7 +53,7 @@ class EngineController(
      * Passes repeat while they make progress, so an item can go from new to
      * backed up in one run and a Live Photo video follows its still (H4).
      */
-    suspend fun runOnce(budget: RunBudget): RunReport =
+    override suspend fun runOnce(budget: RunBudget): RunReport =
         runLock.withLock {
             val ctx = RunCtx(budget, clock)
             val pause = settings.pause()
@@ -64,18 +68,14 @@ class EngineController(
                 // A server-caused pause has expired: try again.
                 settings.clearPause()
             }
-            try {
-                pipeline.scan(ctx, scanner)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // Keep going with the index we have; the next scan tries again.
-                log.add(ActivityLog.ERROR, "Scanning the library failed: ${e.message}")
-            }
+            rescanRequested.set(false)
+            scanSafely(ctx)
             reporter.publish()
             val concurrency = settings.get().uploadConcurrency
             var settled = false
             for (pass in 0 until config.maxPasses) {
+                // New media arrived while this run held the engine (ScanWorker): pick it up now.
+                if (rescanRequested.getAndSet(false)) scanSafely(ctx)
                 val before = ctx.transitions.get()
                 val deferredBefore = ctx.deferred.get()
                 pipeline.hashPhase(ctx)
@@ -95,6 +95,38 @@ class EngineController(
             reporter.publish(force = true)
             report(ctx)
         }
+
+    private suspend fun scanSafely(ctx: RunCtx) {
+        try {
+            pipeline.scan(ctx, scanner)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Keep going with the index we have; the next scan tries again.
+            log.add(ActivityLog.ERROR, "Scanning the library failed: ${e.message}")
+        }
+    }
+
+    override suspend fun scanNow(): Int? {
+        if (!runLock.tryLock()) {
+            rescanRequested.set(true)
+            return null
+        }
+        try {
+            val ctx = RunCtx(RunBudget(), clock)
+            pipeline.scan(ctx, scanner)
+            reporter.publish(force = true)
+            return ctx.transitions.get()
+        } finally {
+            runLock.unlock()
+        }
+    }
+
+    override fun mediaAccess(): MediaAccess = scanner.access()
+
+    override suspend fun pauseState(): PauseState? = settings.pause()
+
+    override suspend fun remainingWork(): RemainingWork = items.remaining(ACTIVE_STATES).let { RemainingWork(it.count, it.bytes) }
 
     private suspend fun report(ctx: RunCtx) =
         RunReport(
@@ -118,7 +150,7 @@ class EngineController(
     suspend fun status(): BackupStatus = reporter.snapshot()
 
     /** Pauses every run until [start]. */
-    suspend fun pause(reason: PauseReason) {
+    override suspend fun pause(reason: PauseReason) {
         settings.setPause(PauseState(reason, null))
         log.add(ActivityLog.PAUSED, "Backup paused (${reason.name})")
         reporter.publish(force = true)
@@ -130,12 +162,35 @@ class EngineController(
         reporter.publish(force = true)
     }
 
-    /** Call on a network change (Task 9): go back to the preferred, LAN-first endpoint (R9). */
-    fun onNetworkChanged() = client.onNetworkChanged()
+    /**
+     * Call on a network change: go back to the preferred, LAN-first endpoint
+     * (R9). A certificate pause (every endpoint refused our pin) is cleared too:
+     * it was most likely a captive portal on the old network.
+     */
+    override suspend fun onNetworkChanged() {
+        client.onNetworkChanged()
+        val p = settings.pause() ?: return
+        if (p.reason == UNTRUSTED_PAUSE_REASON && p.untilMs != null) {
+            settings.clearPause()
+            log.add(ActivityLog.INFO, "Network changed: trying the server again")
+            reporter.publish(force = true)
+        }
+    }
 
-    suspend fun getSettings(): EngineSettings = settings.get()
+    override suspend fun getSettings(): EngineSettings = settings.get()
 
-    suspend fun setSettings(s: EngineSettings) = settings.set(s)
+    /**
+     * Saves the settings. A change of scope (include videos, album selection)
+     * forgets the scan cursors of every volume, so items that already existed
+     * and are now in scope are reported by the next scan and backed up.
+     */
+    suspend fun setSettings(s: EngineSettings) {
+        val old = settings.get()
+        settings.set(s)
+        val scopeChanged =
+            old.includeVideos != s.includeVideos || old.allAlbums != s.allAlbums || old.albumIds.toSet() != s.albumIds.toSet()
+        if (scopeChanged) db.scanState().clear()
+    }
 
     // ---- phone index, attention, activity -------------------------------------
 
@@ -217,7 +272,7 @@ class EngineController(
      * [deleter] shows the OS dialog; only the ids it confirms become `Freed`,
      * cancelled ones stay `BackedUp`.
      */
-    suspend fun freeUpSpace(
+    override suspend fun freeUpSpace(
         localIds: List<String>?,
         deleter: Deleter,
     ): FreeUpResult =

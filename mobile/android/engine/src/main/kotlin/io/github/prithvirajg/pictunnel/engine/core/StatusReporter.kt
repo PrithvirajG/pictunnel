@@ -60,7 +60,8 @@ class StatusReporter(
     }
 
     suspend fun snapshot(): BackupStatus {
-        val c = items.counts()
+        // Totals match the phone index: hidden Live Photo video components are not counted.
+        val c = items.primaryCounts()
         val pause = settings.pause()
         return BackupStatus(
             backedUp = c[ItemState.BackedUp] + c[ItemState.Freed],

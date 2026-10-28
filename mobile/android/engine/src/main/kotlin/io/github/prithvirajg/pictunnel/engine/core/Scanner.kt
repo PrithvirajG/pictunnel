@@ -34,20 +34,39 @@ data class ScannedItem(
  * The result of one scan. [changed] holds new and changed items; [removed]
  * holds local ids deleted from the phone. With [fullRescan], [changed] is the
  * whole library and any indexed item missing from it is dropped from the index
- * too. Deletions on the phone are never sent to the server (R8).
+ * too. Otherwise, a non-null [presentIds] is every id the scanner can still see
+ * (incremental MediaStore scans cannot report deletions), and indexed items
+ * missing from it are dropped. Deletions on the phone are never sent to the
+ * server (R8). [cursors] replaces every stored cursor, one per media volume.
  */
 data class ScanResult(
     val changed: List<ScannedItem>,
     val removed: List<String>,
-    val cursor: ScanCursor?,
+    val cursors: List<ScanCursor>,
     val fullRescan: Boolean,
+    val presentIds: Set<String>? = null,
 )
 
+/** How much of the media library the app may read (API 34+ partial access, M§4.6). */
+enum class MediaAccess {
+    /** Everything. */
+    Full,
+
+    /** Only items the user picked (`READ_MEDIA_VISUAL_USER_SELECTED`): only those are backed up. */
+    Partial,
+
+    /** Nothing: no media permission. */
+    None,
+}
+
 /**
- * The platform scanner (MediaStore on Android, Task 9). It applies the album
- * selection and the include-videos setting itself. [since] is the last stored
- * cursor, or null for the first scan.
+ * The platform scanner (MediaStore on Android). It applies the album
+ * selection and the include-videos setting itself. [since] holds the stored
+ * cursors (one per volume), empty for the first scan.
  */
 interface Scanner {
-    suspend fun scan(since: ScanCursor?): ScanResult
+    suspend fun scan(since: List<ScanCursor>): ScanResult
+
+    /** The current media access; the bridge shows a banner when it is not [MediaAccess.Full]. */
+    fun access(): MediaAccess = MediaAccess.Full
 }

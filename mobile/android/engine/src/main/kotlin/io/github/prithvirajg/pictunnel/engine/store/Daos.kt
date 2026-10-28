@@ -49,6 +49,22 @@ interface ItemsDao {
 
     suspend fun counts(): StateCounts = StateCounts(countRows().associate { it.state to it.count })
 
+    /** Per-state counts of primary items only, matching the phone index (a Live Photo's video is hidden). */
+    @Query("SELECT state, COUNT(*) AS count FROM items WHERE pairRole = 'primary' GROUP BY state")
+    suspend fun countPrimaryRows(): List<StateCount>
+
+    suspend fun primaryCounts(): StateCounts = StateCounts(countPrimaryRows().associate { it.state to it.count })
+
+    /** Primary items in [states] and the bytes of every row (all components) in them. */
+    @Query(
+        """
+        SELECT COALESCE(SUM(CASE WHEN pairRole = 'primary' THEN 1 ELSE 0 END), 0) AS count,
+               COALESCE(SUM(size), 0) AS bytes
+        FROM items WHERE state IN (:states)
+        """,
+    )
+    suspend fun remaining(states: List<ItemState>): CountAndBytes
+
     /** Returns the number of rows changed (0 if the item is unknown). */
     @Query(
         """
@@ -162,6 +178,10 @@ interface ScanStateDao {
 
     @Query("SELECT * FROM scan_state")
     suspend fun all(): List<ScanStateEntity>
+
+    /** Forgets every cursor: the next scan is a full rescan (volume change or scope-changing setting). */
+    @Query("DELETE FROM scan_state")
+    suspend fun clear(): Int
 }
 
 @Dao

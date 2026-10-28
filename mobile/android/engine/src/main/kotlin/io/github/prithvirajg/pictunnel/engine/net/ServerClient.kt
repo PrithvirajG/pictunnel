@@ -76,6 +76,43 @@ class ServerClient(
         return send("$TOMBSTONES_PATH/$sha256") { Request.Builder().url(it).delete().build() }
     }
 
+    /**
+     * `GET /assets/{id}/original` streamed into [out] (saveToGallery). Throws
+     * [ServerException] on a non-200 answer and [IOException] on transport
+     * failures. A `401` refreshes once and retries, like [send].
+     */
+    suspend fun downloadOriginal(
+        assetId: String,
+        out: java.io.OutputStream,
+    ) {
+        require(assetId.isNotEmpty() && assetId.none { it == '/' || it == '?' || it == '#' }) { "bad asset id" }
+        val path = "$ASSETS_PATH/$assetId/original"
+        var token =
+            try {
+                auth.accessToken()
+            } catch (e: AuthException) {
+                throw ServerException(e.outcome.raw())
+            }
+        repeat(2) { attempt ->
+            val response =
+                endpoints.execute(http, path) { url ->
+                    Request.Builder().url(url).get().header("Authorization", "Bearer $token").build()
+                }
+            response.use { r ->
+                if (r.code == 200) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { r.body.byteStream().copyTo(out) }
+                    return
+                }
+                val outcome = Problems.outcome(r)
+                if (r.code != 401 || attempt == 1 || outcome.problem()?.code == "refresh_token_reused") throw ServerException(outcome)
+                when (val refreshed = auth.onUnauthorized(token)) {
+                    is RefreshOutcome.Refreshed -> token = refreshed.accessToken
+                    else -> throw ServerException(refreshed.raw())
+                }
+            }
+        }
+    }
+
     /** Call on a network change: requests go back to the preferred (LAN-first) endpoint order (R9). */
     fun onNetworkChanged() = endpoints.resetToPreferred()
 
@@ -140,6 +177,7 @@ class ServerClient(
     companion object {
         const val SERVER_INFO_PATH = "/api/v1/server/info"
         const val TOMBSTONES_PATH = "/api/v1/tombstones"
+        const val ASSETS_PATH = "/api/v1/assets"
         private val SHA256_HEX = Regex("^[0-9a-f]{64}$")
     }
 }

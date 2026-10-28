@@ -28,6 +28,7 @@ android {
     defaultConfig {
         minSdk = 29
         consumerProguardFiles("consumer-rules.pro")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     compileOptions {
@@ -88,6 +89,10 @@ dependencies {
     // OkHttp 5 only. engine-api pins OkHttp 4.12, so :engine does not depend on it
     // and hand-writes the few DTOs it needs (net/CheckApi.kt, net/ServerClient.kt).
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
+    // Platform adapters (Task 9): WorkManager workers, the delete-request launcher, notifications.
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
+    implementation("androidx.activity:activity-ktx:1.10.1")
+    implementation("androidx.core:core-ktx:1.16.0")
 
     testImplementation(platform("org.junit:junit-bom:5.14.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -101,4 +106,14 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("com.squareup.okhttp3:mockwebserver3:5.3.2")
     testImplementation("com.squareup.okhttp3:okhttp-tls:5.3.2")
+    testImplementation("androidx.work:work-testing:2.10.1")
+
+    // Instrumented tests (emulator API 34, run in CI).
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:core-ktx:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
+    androidTestImplementation("androidx.work:work-testing:2.10.1")
+    androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 }
