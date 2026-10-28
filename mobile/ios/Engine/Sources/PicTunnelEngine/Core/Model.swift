@@ -123,6 +123,8 @@ public struct AttentionItem: Equatable, Sendable {
     public var code: String
     public var message: String
     public var attempts: Int
+    /// The content hash when known ("back up again" for tombstoned content needs it).
+    public var sha256: String? = nil
 }
 
 /// Engine tuning.

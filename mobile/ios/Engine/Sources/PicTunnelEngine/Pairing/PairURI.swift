@@ -71,7 +71,7 @@ public enum PairURI {
     }
 
     /// `^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{2}$`
-    private static func isValidCode(_ code: String) -> Bool {
+    static func isValidCode(_ code: String) -> Bool {
         let groups = code.split(separator: "-", omittingEmptySubsequences: false)
         guard groups.map(\.count) == [4, 4, 2] else { return false }
         return groups.allSatisfy { $0.allSatisfy(codeAlphabet.contains) }

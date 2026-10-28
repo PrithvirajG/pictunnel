@@ -66,5 +66,28 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>io.github.prithvirajg.pictunnel.refresh</string>
+		<string>io.github.prithvirajg.pictunnel.process</string>
+		<string>io.github.prithvirajg.pictunnel.continued.*</string>
+	</array>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_pictunnel._tcp</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>PicTunnel uses the camera to scan the pairing code your server shows.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>PicTunnel finds your PicTunnel server on this network and backs up to it directly.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>PicTunnel saves photos and videos you download from your server to your library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>PicTunnel backs up your photos and videos to your own server.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
 </dict>
 </plist>

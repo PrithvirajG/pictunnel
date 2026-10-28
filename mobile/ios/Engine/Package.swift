@@ -9,7 +9,7 @@ let package = Package(
     name: "PicTunnelEngine",
     platforms: [.iOS(.v16), .macOS(.v13)],
     products: [
-        .library(name: "PicTunnelEngine", targets: ["PicTunnelEngine"]),
+        .library(name: "PicTunnelEngine", targets: ["PicTunnelEngine", "PicTunnelPlatform"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
@@ -24,6 +24,14 @@ let package = Package(
                 .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux])),
             ],
             exclude: ["Bridge"]
+        ),
+        // The iOS adapters (PhotoKit, background URLSession, BGTaskScheduler, Keychain, Bonjour). Every
+        // file is `#if os(iOS)`, so this target is empty elsewhere. Swift 5 mode: these wrap
+        // callback-based Apple APIs that predate Sendable annotations.
+        .target(
+            name: "PicTunnelPlatform",
+            dependencies: ["PicTunnelEngine"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(name: "PicTunnelEngineTests", dependencies: ["PicTunnelEngine"]),
     ]

@@ -16,6 +16,11 @@
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
+		F14E00000000000000000011 /* EngineHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = F14E00000000000000000001 /* EngineHost.swift */; };
+		F14E00000000000000000012 /* EventsRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F14E00000000000000000002 /* EventsRelay.swift */; };
+		F14E00000000000000000013 /* PigeonMapping.swift in Sources */ = {isa = PBXBuildFile; fileRef = F14E00000000000000000003 /* PigeonMapping.swift */; };
+		F14E00000000000000000014 /* Pigeon.g.swift in Sources */ = {isa = PBXBuildFile; fileRef = F14E00000000000000000004 /* Pigeon.g.swift */; };
+		F14E00000000000000000015 /* PicTunnelEngine in Frameworks */ = {isa = PBXBuildFile; productRef = F14E00000000000000000022 /* PicTunnelEngine */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -59,6 +64,11 @@
 		97C146FD1CF9000F007C117D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F14E00000000000000000001 /* EngineHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHost.swift; sourceTree = "<group>"; };
+		F14E00000000000000000002 /* EventsRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventsRelay.swift; sourceTree = "<group>"; };
+		F14E00000000000000000003 /* PigeonMapping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PigeonMapping.swift; sourceTree = "<group>"; };
+		F14E00000000000000000004 /* Pigeon.g.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Pigeon.g.swift; path = Engine/Sources/PicTunnelEngine/Bridge/Pigeon.g.swift; sourceTree = SOURCE_ROOT; };
+		F14E00000000000000000005 /* Engine */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = Engine; path = Engine; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -67,6 +77,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */,
+				F14E00000000000000000015 /* PicTunnelEngine in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -97,6 +108,7 @@
 			isa = PBXGroup;
 			children = (
 				9740EEB11CF90186004384FC /* Flutter */,
+				F14E00000000000000000005 /* Engine */,
 				97C146F01CF9000F007C117D /* Runner */,
 				97C146EF1CF9000F007C117D /* Products */,
 				331C8082294A63A400263BE5 /* RunnerTests */,
@@ -123,6 +135,10 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
+				F14E00000000000000000001 /* EngineHost.swift */,
+				F14E00000000000000000002 /* EventsRelay.swift */,
+				F14E00000000000000000003 /* PigeonMapping.swift */,
+				F14E00000000000000000004 /* Pigeon.g.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
@@ -166,6 +182,7 @@
 			name = Runner;
 			packageProductDependencies = (
 				78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */,
+				F14E00000000000000000022 /* PicTunnelEngine */,
 			);
 			productName = Runner;
 			productReference = 97C146EE1CF9000F007C117D /* Runner.app */;
@@ -202,6 +219,7 @@
 			mainGroup = 97C146E51CF9000F007C117D;
 			packageReferences = (
 				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */,
+				F14E00000000000000000021 /* XCLocalSwiftPackageReference "Engine" */,
 			);
 			productRefGroup = 97C146EF1CF9000F007C117D /* Products */;
 			projectDirPath = "";
@@ -284,6 +302,10 @@
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
+				F14E00000000000000000011 /* EngineHost.swift in Sources */,
+				F14E00000000000000000012 /* EventsRelay.swift in Sources */,
+				F14E00000000000000000013 /* PigeonMapping.swift in Sources */,
+				F14E00000000000000000014 /* Pigeon.g.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -360,7 +382,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = iphoneos;
@@ -486,7 +508,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
@@ -537,7 +559,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = iphoneos;
@@ -631,12 +653,21 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage;
 		};
+		F14E00000000000000000021 /* XCLocalSwiftPackageReference "Engine" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Engine;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = FlutterGeneratedPluginSwiftPackage;
+		};
+		F14E00000000000000000022 /* PicTunnelEngine */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F14E00000000000000000021 /* XCLocalSwiftPackageReference "Engine" */;
+			productName = PicTunnelEngine;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

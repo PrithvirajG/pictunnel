@@ -25,9 +25,8 @@ actor AsyncLock {
 /// completion mapping, plus the queries and user actions the bridge exposes (M§3). Platform
 /// pieces come in through `library`, `uploader` and the `Deleter` passed to `freeUpSpace`.
 public final class EngineController: @unchecked Sendable {
-    /// The Pigeon `PauseReason` has no "server identity changed" value; a persistent pin mismatch
-    /// pauses with the closest fit and an activity entry ("server certificate changed — pair again").
-    public static let untrustedPauseReason: PauseReason = .permission
+    /// A persistent pin mismatch pauses backup as "server certificate changed — pair again".
+    public static let untrustedPauseReason: PauseReason = .serverCertificateChanged
 
     private static let maxPage = 1000
 
@@ -293,7 +292,8 @@ public final class EngineController: @unchecked Sendable {
         try db.items(in: [.needsAttention], limit: Self.maxPage).map {
             let code = $0.lastError ?? "unknown"
             return AttentionItem(localId: $0.localId, filename: $0.filename, code: code,
-                                 message: Self.attentionMessage(code), attempts: $0.attempts)
+                                 message: Self.attentionMessage(code), attempts: $0.attempts,
+                                 sha256: $0.sha256)
         }
     }
 

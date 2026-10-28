@@ -353,6 +353,16 @@ extension EngineDB {
         try write { db in try db.execute(sql: "DELETE FROM settings WHERE key = ?", arguments: [key]) }
     }
 
+    /// Empties every table (unpairing, or pairing with another server): the index, hash cache,
+    /// scan token, activity log and settings start over.
+    public func reset() throws {
+        try write { db in
+            for table in ["items", "hash_cache", "scan_state", "activity", "settings"] {
+                try db.execute(sql: "DELETE FROM \(table)")
+            }
+        }
+    }
+
     private func read<T>(_ body: (Database) throws -> T) throws -> T { try readerWriter.read(body) }
     private func write<T>(_ body: (Database) throws -> T) throws -> T { try readerWriter.write(body) }
 }

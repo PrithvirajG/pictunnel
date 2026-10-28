@@ -7,4 +7,6 @@ public enum PauseReason: String, Codable, CaseIterable, Sendable {
     case quota = "Quota"
     case clientTooOld = "ClientTooOld"
     case permission = "Permission"
+    /// The server's certificate no longer passes the pinning rule (P§6.3): pair again.
+    case serverCertificateChanged = "ServerCertificateChanged"
 }
