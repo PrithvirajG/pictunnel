@@ -154,6 +154,8 @@ final class Pipeline: @unchecked Sendable {
     static let maxResolves = 2
     static let serverPauseMs: Int64 = 30 * 60 * 1000
     static let untrustedPauseMs: Int64 = 60 * 60 * 1000
+    /// The longest server-caused pause; an expiry further ahead means the clock jumped back (R10).
+    static let maxPauseMs: Int64 = max(serverPauseMs, untrustedPauseMs)
     /// Refresh retries after a transient failure: 2, 4 and 8 s, all inside the 30 s grace window.
     static let maxAuthRetries = 3
     static let authRetryCapMs: Int64 = 8000
@@ -287,14 +289,30 @@ final class Pipeline: @unchecked Sendable {
             if res.role != .liveVideo, res.kind == .video, !s.includeVideos { return false }
             return true
         }
-        // H3: an edited asset whose unedited original is kept stacks both under its local identifier.
-        let stacked = Set(resources.filter { $0.role == .original }.map(\.assetLocalId))
+        // H3: an edited asset whose unedited original is kept stacks both under its local identifier,
+        // but only if the primary is (re)created with that key: a stack_key cannot be added to an
+        // asset the server already has, so then the original goes up on its own, unstacked.
+        let primaries = Dictionary(resources.filter { $0.role == .primary }.map { ($0.assetLocalId, $0) },
+                                   uniquingKeysWith: { a, _ in a })
+        var stackable: [String: Bool] = [:]
+        for asset in Set(resources.filter { $0.role == .original }.map(\.assetLocalId)) {
+            stackable[asset] = try Self.primaryTakesStackKey(try db.item(localId: asset), primaries[asset])
+        }
         let live = Set(resources.filter { $0.role == .liveVideo }.map(\.assetLocalId))
 
         var writes: [Item] = []
         for res in resources {
             let id = ItemRef(assetLocalId: res.assetLocalId, role: res.role).rowId
-            let stackKey = stacked.contains(res.assetLocalId) && res.role != .liveVideo ? res.assetLocalId : nil
+            let canStack = stackable[res.assetLocalId] == true
+            let stackKey: String? = switch res.role {
+            case .liveVideo: nil
+            case .original: canStack ? res.assetLocalId : nil
+            case .primary: canStack ? res.assetLocalId : nil
+            }
+            if res.role == .original, !canStack, try db.item(localId: id) == nil {
+                log.note(ActivityLog.info, "The unedited original of \(res.filename) is backed up unstacked: "
+                    + "its edited version was already on the server", id)
+            }
             let pairRole: PairRole = res.role == .liveVideo ? .liveVideo : .primary
             let pairLocalId: String? = switch res.role {
             case .liveVideo: res.assetLocalId
@@ -352,6 +370,17 @@ final class Pipeline: @unchecked Sendable {
         }
         try db.setScanToken(scope: Self.scanScope, token: r.token)
         ctx.count(\.scanned, r.changed.count)
+    }
+
+    /// Whether an asset's primary will carry the stack key: it is new, it changed (re-created as a
+    /// new asset), it already has the key, or it was never created on the server.
+    static func primaryTakesStackKey(_ existing: Item?, _ res: LibraryResource?) throws -> Bool {
+        guard let existing else { return true }
+        if let res, existing.size != res.size || existing.modifiedAtMs != res.modifiedAtMs { return true }
+        if existing.stackKey != nil { return true }
+        let created = existing.assetId != nil || existing.uploadUrl != nil
+            || ![.discovered, .hashed, .queued].contains(existing.state)
+        return !created
     }
 
     // MARK: - hash (R3, M§6)
@@ -503,7 +532,14 @@ final class Pipeline: @unchecked Sendable {
         return (p.state == .backedUp || p.state == .freed) && p.sha256 != nil
     }
 
-    private func uploadItem(_ ctx: RunCtx, _ start: Item) async {
+    private func uploadItem(_ ctx: RunCtx, _ listed: Item) async {
+        // The row may have moved since the phase listed it (an orphan completion was applied
+        // meanwhile), or a task for it may be running: act only on the current row.
+        guard !(await tracker.isInFlight(listed.localId)),
+              let start = try? db.item(localId: listed.localId),
+              [.queued, .uploading, .verifying].contains(start.state),
+              start.nextAttemptAtMs.map({ $0 <= clock.nowMs() || $0 > clock.nowMs() + EngineDB.maxBackoffMs }) ?? true
+        else { return }
         var item = start
         reporter.uploadStarted(item)
         defer { reporter.uploadEnded(start.localId) }
@@ -571,7 +607,9 @@ final class Pipeline: @unchecked Sendable {
         let base = client.endpoints.active
         let request = TusRequests.create(base: base, meta: meta, length: item.size, bodyFile: file)
         let desc = TaskDescription(itemId: item.localId, uploadId: "", offset: 0)
-        guard let (raw, failure) = await send(ctx, request, file: file, desc: desc) else { return (item, .stopItem) }
+        guard case let .done(raw, failure) = await send(ctx, request, file: file, desc: desc) else {
+            return (item, .stopItem)
+        }
         return await createOutcome(ctx, item, raw, failure: failure, base: base)
     }
 
@@ -607,12 +645,17 @@ final class Pipeline: @unchecked Sendable {
         guard let (request, chunk, desc) = await preparePatch(ctx, item, url: url, offset: offset) else {
             return (item, .stopItem)
         }
-        guard let (raw, failure) = await send(ctx, request, file: chunk, desc: desc) else {
-            // The run detached while the task runs on: keep its chunk file.
+        switch await send(ctx, request, file: chunk, desc: desc) {
+        case .detached:
+            // The task runs on in the session: keep its chunk file for it.
             return (item, .stopItem)
+        case .notStarted:
+            try? FileManager.default.removeItem(at: chunk)
+            return (item, .stopItem)
+        case let .done(raw, failure):
+            try? FileManager.default.removeItem(at: chunk)
+            return await patchOutcome(ctx, item, raw, failure: failure)
         }
-        try? FileManager.default.removeItem(at: chunk)
-        return await patchOutcome(ctx, item, raw, failure: failure)
     }
 
     /// Cuts the next chunk (M§6: only after the previous one was accepted) and builds its PATCH.
@@ -647,19 +690,27 @@ final class Pipeline: @unchecked Sendable {
         return client.endpoints.resolve(path)
     }
 
+    enum SendResult {
+        case done(ServerOutcome, NetFailure?)
+        /// The run stopped waiting (budget spent or cancelled); the task keeps running in the session.
+        case detached
+        /// The task could not be handed to the session.
+        case notStarted
+    }
+
     /// Sends a byte-carrying request through the uploader and waits for its completion. A `401`
-    /// refreshes once (single-flight) and sends again. Nil when the run detached (the task keeps
-    /// running in the session) or the task could not be started.
-    private func send(_ ctx: RunCtx, _ request: URLRequest, file: URL?, desc: TaskDescription) async -> (ServerOutcome, NetFailure?)? {
+    /// refreshes once (single-flight) and sends again. Cancelling the caller stops the wait, not
+    /// the task: its completion is then applied as an orphan.
+    private func send(_ ctx: RunCtx, _ request: URLRequest, file: URL?, desc: TaskDescription) async -> SendResult {
         var retried = false
         while true {
             let token: String
             do {
                 token = try await client.auth.accessToken()
             } catch let AuthError.transient(raw) {
-                return (raw, .refreshFailed)
+                return .done(raw, .refreshFailed)
             } catch {
-                return (ServerClient.repairOutcome, .needsRepair)
+                return .done(ServerClient.repairOutcome, .needsRepair)
             }
             let req = TusRequests.authorize(request, accessToken: token, clientHeader: client.http.clientHeader)
             await tracker.begin(desc, owned: true)
@@ -669,38 +720,52 @@ final class Pipeline: @unchecked Sendable {
                 await tracker.abandon(desc)
                 log.note(ActivityLog.error, "Could not start an upload: \(error)")
                 ctx.skip(desc.itemId)
-                return nil
+                return .notStarted
             }
-            guard let raw = await tracker.wait(desc) else { return nil }
+            let tracker = self.tracker
+            let answer = await withTaskCancellationHandler {
+                await tracker.wait(desc)
+            } onCancel: {
+                Task { await tracker.detach(desc) }
+            }
+            guard let raw = answer else {
+                if Task.isCancelled { ctx.stop(.budget) }
+                return .detached
+            }
             if raw.status == 401, !retried, raw.problem?.code != "refresh_token_reused" {
                 retried = true
                 switch await client.auth.onUnauthorized(failedToken: token) {
                 case .refreshed: continue
-                case let .needsRepair(r): return (r ?? ServerClient.repairOutcome, .needsRepair)
-                case let .transient(r): return (r, .refreshFailed)
+                case let .needsRepair(r): return .done(r ?? ServerClient.repairOutcome, .needsRepair)
+                case let .transient(r): return .done(r, .refreshFailed)
                 }
             }
-            return (raw, nil)
+            return .done(raw, nil)
         }
     }
 
     // MARK: - completions without a waiting run (M§6)
 
     /// Applies a completion nobody waits for: after a relaunch, or after the run that started the
-    /// task ended. The row must still be where the task left it. When the server confirmed a new
-    /// offset and bytes remain, the next chunk goes out at once, so uploading continues while the
-    /// app is in the background.
+    /// task ended. The caller holds the item's claim (`UploadTracker.complete` returned `.orphan`)
+    /// until this returns, so no run acts on the item meanwhile. The row must still be where the
+    /// task left it; otherwise the completion is stale and changes nothing. When the server
+    /// confirmed a new offset and bytes remain, the next chunk goes out at once, so uploading
+    /// continues while the app is in the background.
     func handleOrphan(_ desc: TaskDescription, _ raw: ServerOutcome) async {
-        guard let item = try? db.item(localId: desc.itemId) else { return }
         let ctx = RunCtx(budget: RunBudget(), clock: clock)
         let result: (Item, Next)
+        let row = try? db.item(localId: desc.itemId)
         if desc.isCreate {
-            guard item.state == .queued || (item.state == .uploading && item.uploadUrl == nil) else { return }
+            guard let item = row, item.state == .queued || (item.state == .uploading && item.uploadUrl == nil) else { return }
             result = await createOutcome(ctx, item, raw, failure: nil, base: client.endpoints.active)
         } else {
-            guard item.state == .uploading, item.uploadOffset == desc.offset,
+            // This task is over: its chunk file goes, unless another task of the item still needs it.
+            if !(await tracker.chunkInUse(itemId: desc.itemId, offset: desc.offset, except: desc.description)) {
+                try? FileManager.default.removeItem(at: chunkURL(desc.itemId, offset: desc.offset))
+            }
+            guard let item = row, item.state == .uploading, item.uploadOffset == desc.offset,
                   (item.uploadId ?? "") == desc.uploadId else { return }
-            try? FileManager.default.removeItem(at: chunkURL(item.localId, offset: desc.offset))
             result = await patchOutcome(ctx, item, raw, failure: nil)
         }
         let next = result.0
@@ -710,8 +775,12 @@ final class Pipeline: @unchecked Sendable {
     }
 
     private func continueInBackground(_ ctx: RunCtx, _ item: Item, url: URL, offset: Int64) async {
-        guard let (request, chunk, desc) = await preparePatch(ctx, item, url: url, offset: offset),
-              let token = try? await client.auth.accessToken() else { return }
+        guard let (request, chunk, desc) = await preparePatch(ctx, item, url: url, offset: offset) else { return }
+        guard let token = try? await client.auth.accessToken() else {
+            // The next run sends it (after a HEAD); no chunk file is left behind.
+            try? FileManager.default.removeItem(at: chunk)
+            return
+        }
         let req = TusRequests.authorize(request, accessToken: token, clientHeader: client.http.clientHeader)
         await tracker.begin(desc, owned: false)
         do {
@@ -980,7 +1049,9 @@ final class Pipeline: @unchecked Sendable {
     @discardableResult
     private func wait(_ ctx: RunCtx, _ item: Item, delayMs: Int64) -> Item {
         var n = item
-        n.nextAttemptAtMs = clock.nowMs() + delayMs
+        // R10: no wait is longer than the backoff cap (a longer Retry-After included), so a later
+        // time can only mean the clock jumped back, and `due` treats it as due.
+        n.nextAttemptAtMs = clock.nowMs() + min(max(delayMs, 0), EngineDB.maxBackoffMs)
         return save(ctx, item, n)
     }
 
@@ -1003,9 +1074,18 @@ final class Pipeline: @unchecked Sendable {
     }
 
     func due(_ states: [ItemState], _ ctx: RunCtx, limit: Int) -> [Item] {
+        // Keyset pages past the rows skipped this run, so skipped rows never hide due ones.
         let skipped = ctx.skipped
-        let rows = (try? db.due(states, nowMs: clock.nowMs(), limit: limit + min(skipped.count, limit))) ?? []
-        return rows.filter { !skipped.contains($0.localId) }
+        let now = clock.nowMs()
+        var out: [Item] = []
+        var after: PageKey?
+        while out.count < limit {
+            guard let page = try? db.due(states, nowMs: now, after: after, limit: limit) else { break }
+            for it in page where !skipped.contains(it.localId) && out.count < limit { out.append(it) }
+            guard page.count == limit, let last = page.last else { break }
+            after = PageKey(last)
+        }
+        return out
     }
 
     static func errorOf(_ raw: ServerOutcome) -> String? {

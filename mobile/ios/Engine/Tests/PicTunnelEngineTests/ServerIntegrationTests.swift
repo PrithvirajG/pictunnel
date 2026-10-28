@@ -173,9 +173,30 @@ final class ChaosUploader: BackgroundUploader, @unchecked Sendable {
     var sendBytes = 0
     var beforeDrop: @Sendable (URLRequest) -> Void = { _ in }
 
-    init(session: URLSession) {
+    /// Tasks "still running in the OS": not sent until `release`.
+    var hold: @Sendable (URLRequest) -> Bool = { _ in false }
+    private var held: [String: HeldTask] = [:]
+
+    struct HeldTask: @unchecked Sendable {
+        let request: URLRequest
+        let file: URL?
+    }
+
+    init(session: URLSession, restoring: [String: HeldTask] = [:]) {
         self.session = session
         inner = ForegroundUploader(session: session)
+        held = restoring
+    }
+
+    var heldTasks: [String: HeldTask] { lock.lockSync(); defer { lock.unlockSync() }; return held }
+
+    /// Sends a held task now, through this uploader's session and completion handler.
+    func release(_ desc: String) async throws {
+        lock.lockSync()
+        let t = held.removeValue(forKey: desc)
+        lock.unlockSync()
+        guard let t else { return }
+        try await inner.enqueue(request: t.request, file: t.file, taskDescription: desc)
     }
 
     var lines: [String] { lock.lockSync(); defer { lock.unlockSync() }; return _lines }
@@ -185,9 +206,18 @@ final class ChaosUploader: BackgroundUploader, @unchecked Sendable {
         inner.setCompletionHandler(handler)
     }
 
-    func pendingTaskDescriptions() async -> [String] { await inner.pendingTaskDescriptions() }
+    func pendingTaskDescriptions() async -> [String] {
+        let running = await inner.pendingTaskDescriptions()
+        return running + heldTasks.keys
+    }
 
     func enqueue(request: URLRequest, file: URL?, taskDescription: String) async throws {
+        if hold(request) {
+            lock.lockSync()
+            held[taskDescription] = HeldTask(request: request, file: file)
+            lock.unlockSync()
+            return
+        }
         lock.lockSync()
         let at = request.httpMethod == "PATCH" ? " @\(request.value(forHTTPHeaderField: "Upload-Offset") ?? "?")" : ""
         _lines.append("\(request.httpMethod ?? "?") \(request.url?.path ?? "")\(at)")
@@ -309,7 +339,7 @@ final class ServerIntegrationTests: XCTestCase {
         #endif
     }
 
-    private func controller(chunk: Int64 = 1 << 20) -> EngineController {
+    private func controller(chunk: Int64 = 1 << 20, restoring: [String: ChaosUploader.HeldTask] = [:]) -> EngineController {
         let creds = store.creds!
         let endpoints = Endpoints(creds.endpoints)
         let session = makeSession(pin: creds.pinSpki)
@@ -317,7 +347,7 @@ final class ServerIntegrationTests: XCTestCase {
         let clock = self.clock
         let auth = AuthManager(store: store, http: http, endpoints: endpoints,
                                uptime: { TimeInterval(clock.monotonicMs()) / 1000 })
-        chaos = ChaosUploader(session: session)
+        chaos = ChaosUploader(session: session, restoring: restoring)
         return EngineController(
             db: db, library: library, uploader: chaos,
             client: ServerClient(endpoints: endpoints, auth: auth, http: http),
@@ -413,6 +443,37 @@ final class ServerIntegrationTests: XCTestCase {
         XCTAssertEqual(again.count, 1)
         XCTAssertNotEqual(again.first?["id"]?.stringValue, first)
         XCTAssertEqual(again.first?["id"]?.stringValue, try item("t2").assetId)
+    }
+
+    /// M§6: the run's budget ends while the OS still uploads a chunk; the app is relaunched and the
+    /// new controller applies the completion and sends the last chunk itself.
+    func testDetachedChunkCompletesThroughRelaunchedController() async throws {
+        let mib = 1 << 20
+        let b = randomBytes(2 * mib + 777, seed: 15)
+        library.put("bg", b)
+        let first = controller()
+        chaos.hold = { r in r.httpMethod == "PATCH" && r.value(forHTTPHeaderField: "Upload-Offset") == "\(mib)" }
+        let r1 = await first.runOnce(budget: RunBudget(maxDurationMs: 1500))
+        XCTAssertEqual(r1.stop, .budget)
+        let held = chaos.heldTasks
+        XCTAssertEqual(held.count, 1)
+        let desc = try XCTUnwrap(held.keys.first)
+        XCTAssertEqual(try item("bg").state, .uploading)
+        XCTAssertEqual(try item("bg").uploadOffset, Int64(mib))
+
+        // Relaunch: a new controller whose session still runs that task.
+        let second = controller(restoring: held)
+        let relaunched = try XCTUnwrap(chaos)
+        _ = await second.runOnce(budget: RunBudget())
+        XCTAssertEqual(relaunched.lines, [], "nothing re-sent for the running task")
+        try await relaunched.release(desc)
+        let done = try await waitUntil(timeout: 30) { try self.item("bg").state == .backedUp }
+        XCTAssertTrue(done, "\(relaunched.lines)")
+        XCTAssertEqual(relaunched.lines.filter { $0.hasPrefix("PATCH") }.compactMap { $0.components(separatedBy: "@").last },
+                       ["\(2 * mib)"])
+        let assets = try server.assets(sha256: sha256Hex(b))
+        XCTAssertEqual(assets.count, 1)
+        XCTAssertEqual(assets.first?["id"]?.stringValue, try item("bg").assetId)
     }
 
     func testRefreshRotationSurvives() async throws {

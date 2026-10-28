@@ -95,6 +95,15 @@ final class FakeLibrary: PhotoLibrary, @unchecked Sendable {
     private var order: [String] = []
     private var _exports: [String] = []
     private var _scans = 0
+    private var seq: Int64 = 0
+    private var changedAt: [String: Int64] = [:]
+    private var removedAt: [String: Int64] = [:]
+
+    /// Records a change for incremental scans (the change token is the sequence number).
+    private func touch(_ id: String, removed: Bool = false) {
+        seq += 1
+        if removed { removedAt[id] = seq; changedAt[id] = nil } else { changedAt[id] = seq; removedAt[id] = nil }
+    }
     /// Called before each export with the export count so far (1-based); may throw.
     var onExport: @Sendable (Int, String) throws -> Void = { _, _ in }
 
@@ -102,6 +111,7 @@ final class FakeLibrary: PhotoLibrary, @unchecked Sendable {
              kind: ItemKind = .photo, mime: String = "image/jpeg") {
         locked {
             if assets[id] == nil { order.append(id) }
+            touch(id)
             assets[id] = Asset(kind: kind, takenAtMs: takenAtMs ?? Int64(1_000 + order.count),
                                resources: [.primary: Res(bytes: bytes, modifiedAtMs: modifiedAtMs, mime: mime,
                                                          filename: "\(id).jpg")])
@@ -111,6 +121,7 @@ final class FakeLibrary: PhotoLibrary, @unchecked Sendable {
     func putLive(_ id: String, still: Data, video: Data, takenAtMs: Int64 = 5_000) {
         locked {
             if assets[id] == nil { order.append(id) }
+            touch(id)
             assets[id] = Asset(kind: .livePhoto, takenAtMs: takenAtMs, resources: [
                 .primary: Res(bytes: still, modifiedAtMs: 100, mime: "image/heic", filename: "\(id).HEIC"),
                 .liveVideo: Res(bytes: video, modifiedAtMs: 100, mime: "video/quicktime", filename: "\(id).MOV"),
@@ -131,6 +142,7 @@ final class FakeLibrary: PhotoLibrary, @unchecked Sendable {
             a.resources[.primary] = Res(bytes: rendition, modifiedAtMs: modifiedAtMs, mime: "image/jpeg",
                                         filename: "FullSizeRender.jpg")
             assets[id] = a
+            touch(id)
         }
     }
 
@@ -138,6 +150,7 @@ final class FakeLibrary: PhotoLibrary, @unchecked Sendable {
         locked {
             assets[id] = nil
             order.removeAll { $0 == id }
+            touch(id, removed: true)
         }
     }
 
@@ -147,9 +160,13 @@ final class FakeLibrary: PhotoLibrary, @unchecked Sendable {
     func scan(since token: Data?, settings: EngineSettings) async throws -> LibraryScan {
         locked {
             _scans += 1
+            // A token is the change sequence it was issued at; nil or unknown means a full rescan.
+            let since = token.flatMap { Int64(String(decoding: $0, as: UTF8.self).dropFirst()) }
             var out: [LibraryResource] = []
             for id in order {
                 guard let a = assets[id] else { continue }
+                if let since, (changedAt[id] ?? 0) <= since { continue }
+                if a.kind == .video, !settings.includeVideos { continue }
                 for role in ResourceRole.allCases {
                     guard let r = a.resources[role] else { continue }
                     out.append(LibraryResource(
@@ -158,7 +175,8 @@ final class FakeLibrary: PhotoLibrary, @unchecked Sendable {
                         filename: r.filename, width: 4032, height: 3024, durationMs: role == .liveVideo ? 3000 : nil))
                 }
             }
-            return LibraryScan(changed: out, removedAssets: [], token: Data("t\(_scans)".utf8), fullRescan: true)
+            let removed = since.map { s in removedAt.filter { $0.value > s }.map(\.key) } ?? []
+            return LibraryScan(changed: out, removedAssets: removed, token: Data("s\(seq)".utf8), fullRescan: since == nil)
         }
     }
 
@@ -207,6 +225,8 @@ final class FakeUploader: BackgroundUploader, @unchecked Sendable {
 
     /// Keep this task pending (it is still running in the OS) until `release`.
     var hold: @Sendable (String, Recorded) -> Bool = { _, _ in false }
+    /// Fail the task with this error (e.g. a pinning rejection) before anything reaches the server.
+    var errorFor: @Sendable (Recorded) -> Error? = { _ in nil }
     /// Fail the task with this error code before anything reaches the server.
     var failBeforeSending: @Sendable (Recorded) -> URLError.Code? = { _ in nil }
     /// Deliver the task to the server, then report this error code instead of its response.
@@ -258,8 +278,31 @@ final class FakeUploader: BackgroundUploader, @unchecked Sendable {
         lock.lockSync()
         let h = handler
         lock.unlockSync()
+        let completion = answer(desc, rec)
+        await h?(completion)
+    }
+
+    /// Lets a held task run once, then delivers its completion twice at the same time (a session
+    /// that reports a task again, e.g. around a relaunch).
+    func releaseTwice(_ desc: String) async {
+        lock.lockSync()
+        let rec = held.removeValue(forKey: desc)
+        heldOrder.removeAll { $0 == desc }
+        let h = handler
+        lock.unlockSync()
+        guard let rec, let h else { return }
+        let completion = answer(desc, rec)
+        await withTaskGroup(of: Void.self) { g in
+            g.addTask { await h(completion) }
+            g.addTask { await h(completion) }
+        }
+    }
+
+    private func answer(_ desc: String, _ rec: Recorded) -> UploadCompletion {
         let completion: UploadCompletion
-        if let code = failBeforeSending(rec) {
+        if let e = errorFor(rec) {
+            completion = UploadCompletion(taskDescription: desc, status: nil, headers: [:], body: nil, error: e)
+        } else if let code = failBeforeSending(rec) {
             completion = UploadCompletion(taskDescription: desc, status: nil, headers: [:], body: nil,
                                           error: URLError(code))
         } else {
@@ -278,7 +321,7 @@ final class FakeUploader: BackgroundUploader, @unchecked Sendable {
                 }
             }
         }
-        await h?(completion)
+        return completion
     }
 }
 

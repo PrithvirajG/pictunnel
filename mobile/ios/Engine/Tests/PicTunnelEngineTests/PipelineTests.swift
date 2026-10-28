@@ -545,29 +545,206 @@ final class PipelineTests: XCTestCase {
     }
 
     func testUneditedOriginalStackKey() async throws {
+        // On from the start: the current rendition and the original share stack_key (H3).
+        let c = controller()
+        var s = await c.getSettings()
+        s.keepUneditedOriginals = true
+        try await c.setSettings(s)
+        let original = randomBytes(500, seed: 1)
+        let edited = randomBytes(520, seed: 2)
+        library.put("E", original)
+        library.edit("E", rendition: edited, modifiedAtMs: 200)
+        _ = await c.runOnce(budget: RunBudget())
+
+        XCTAssertEqual(Set(server.creates.compactMap { $0["sha256"] }), [sha256Hex(edited), sha256Hex(original)])
+        XCTAssertEqual(server.creates.map { $0["stack_key"] }, ["E", "E"])
+        let orig = try item(ItemRef(assetLocalId: "E", role: .original).rowId)
+        XCTAssertEqual(orig.state, .backedUp)
+        XCTAssertEqual(orig.stackKey, "E")
+        XCTAssertEqual(try item("E").stackKey, "E")
+        XCTAssertNotEqual(server.assetId(sha256Hex(original)), server.assetId(sha256Hex(edited)))
+    }
+
+    func testOriginalKeptLaterIsUploadedUnstacked() async throws {
         let original = randomBytes(500, seed: 1)
         let edited = randomBytes(520, seed: 2)
         library.put("E", original)
         library.edit("E", rendition: edited, modifiedAtMs: 200)
         let c = controller()
-        // Off by default: only the current rendition (H3).
+        // Off by default: only the current rendition, created without a stack key.
         _ = await c.runOnce(budget: RunBudget())
         XCTAssertEqual(server.creates.map { $0["sha256"] }, [sha256Hex(edited)])
         XCTAssertNil(server.creates[0]["stack_key"])
 
+        // Turned on later: the scope change rescans, and the original goes up on its own.
         var s = await c.getSettings()
         s.keepUneditedOriginals = true
         try await c.setSettings(s)
         _ = await c.runOnce(budget: RunBudget())
         let orig = try item(ItemRef(assetLocalId: "E", role: .original).rowId)
         XCTAssertEqual(orig.state, .backedUp)
-        XCTAssertEqual(orig.stackKey, "E")
-        XCTAssertEqual(try item("E").stackKey, "E")
-        let last = try XCTUnwrap(server.creates.last)
-        XCTAssertEqual(last["sha256"], sha256Hex(original))
-        XCTAssertEqual(last["stack_key"], "E")
-        XCTAssertNotEqual(server.assetId(sha256Hex(original)), server.assetId(sha256Hex(edited)))
+        XCTAssertNil(orig.stackKey)
+        XCTAssertNil(try item("E").stackKey)
+        XCTAssertEqual(server.creates.count, 2)
+        XCTAssertEqual(server.creates[1]["sha256"], sha256Hex(original))
+        XCTAssertNil(server.creates[1]["stack_key"])
+        let log = try db.latestActivity(limit: 20).map(\.message)
+        XCTAssertTrue(log.contains { $0.contains("unstacked") }, "\(log)")
     }
+
+    func testScopeChangeRescansExistingAssets() async throws {
+        library.put("img", randomBytes(300, seed: 1))
+        library.put("clip", randomBytes(400, seed: 2), kind: .video, mime: "video/mp4")
+        let c = controller()
+        var s = await c.getSettings()
+        s.includeVideos = false
+        try await c.setSettings(s)
+        _ = await c.runOnce(budget: RunBudget())
+        XCTAssertEqual(try item("img").state, .backedUp)
+        XCTAssertNil(try db.item(localId: "clip"))
+        // Scans are incremental: nothing changed, nothing new.
+        _ = await c.runOnce(budget: RunBudget())
+        XCTAssertNil(try db.item(localId: "clip"))
+
+        s.includeVideos = true
+        try await c.setSettings(s)
+        _ = await c.runOnce(budget: RunBudget())
+        XCTAssertEqual(try item("clip").state, .backedUp)
+    }
+
+    func testDuplicateCompletionDuringRunIsNoOp() async throws {
+        let b = randomBytes(2500)
+        library.put("big", b)
+        uploader.hold = { _, r in r.method == "PATCH" && r.header("Upload-Offset") == "1000" }
+        _ = await controller(chunk: 1000).runOnce(budget: RunBudget(maxDurationMs: 300))
+        let desc = try XCTUnwrap(uploader.heldDescriptions.first)
+        let pending = try XCTUnwrap(uploader.sent.last?.request)
+        let uploadId = try XCTUnwrap(try item("big").uploadId)
+
+        // Relaunch: a run is busy with another item while the session reports the task twice.
+        library.put("other", randomBytes(300, seed: 9))
+        let relaunched = FakeUploader(restoring: [desc: pending])
+        relaunched.hold = { d, _ in d.hasPrefix("other|") }
+        let c = controller(chunk: 1000, uploader: relaunched)
+        let run = Task { await c.runOnce(budget: RunBudget()) }
+        let busy = await waitUntil { relaunched.heldDescriptions.contains("other||0") }
+        XCTAssertTrue(busy)
+        await relaunched.releaseTwice(desc)
+        relaunched.hold = { _, _ in false }
+        await relaunched.release("other||0")
+        _ = await run.value
+        let done = try await waitUntil { try self.item("big").state == .backedUp }
+        XCTAssertTrue(done)
+
+        XCTAssertEqual(requests.filter { $0.method == "PATCH" }.map { $0.header("Upload-Offset")! }, ["0", "1000", "2000"])
+        XCTAssertEqual(relaunched.sent.filter { $0.desc.hasPrefix("big|") }.map(\.desc), ["big|\(uploadId)|2000"])
+        XCTAssertEqual(requests.filter { $0.method == "POST" && $0.path == "/api/v1/uploads" }.count, 2, "big once, other once")
+        XCTAssertEqual(try item("big").assetId, server.assetId(sha256Hex(b)))
+        XCTAssertEqual(try item("other").state, .backedUp)
+        XCTAssertEqual(stagedFiles(), [])
+    }
+
+    func testRetryAfterIsClampedToBackoffCap() async throws {
+        library.put("r", randomBytes(300))
+        server.override = { r in
+            r.method == "POST" && r.path == "/api/v1/uploads"
+                ? .problem(429, "rate_limited", headers: ["Retry-After": "3600"]) : nil
+        }
+        let c = controller()
+        let report = await c.runOnce(budget: RunBudget())
+        let r = try item("r")
+        let wait = try XCTUnwrap(r.nextAttemptAtMs) - clock.nowMs()
+        XCTAssertGreaterThan(wait, 0)
+        XCTAssertLessThanOrEqual(wait, EngineDB.maxBackoffMs)
+        XCTAssertEqual(report.nextAttemptAtMs, r.nextAttemptAtMs)
+        // Not mistaken for a clock jump: the next run does not retry early.
+        let before = uploader.sent.count
+        _ = await c.runOnce(budget: RunBudget())
+        XCTAssertEqual(uploader.sent.count, before)
+    }
+
+    func testPauseBeyondItsLengthExpiresAfterClockJump() async throws {
+        library.put("p", randomBytes(300))
+        let c = controller()
+        // The clock went back: the pause ends further away than any server pause lasts.
+        try SettingsRepo(db: db).setPause(PauseState(reason: .serverFull, untilMs: clock.nowMs() + 10 * 60 * 60 * 1000))
+        let report = await c.runOnce(budget: RunBudget())
+        XCTAssertNotEqual(report.stop, .paused)
+        XCTAssertEqual(try item("p").state, .backedUp)
+        // A pause within its length still holds.
+        try SettingsRepo(db: db).setPause(PauseState(reason: .serverFull, untilMs: clock.nowMs() + 10 * 60 * 1000))
+        let again = await c.runOnce(budget: RunBudget())
+        XCTAssertEqual(again.stop, .paused)
+    }
+
+    func testCancellingRunReturnsPromptlyWhileUploadPending() async throws {
+        library.put("c", randomBytes(300))
+        uploader.hold = { _, _ in true }
+        let c = controller()
+        let run = Task { await c.runOnce(budget: RunBudget()) }
+        let started = await waitUntil { !self.uploader.heldDescriptions.isEmpty }
+        XCTAssertTrue(started)
+        let t0 = Date()
+        run.cancel()
+        let report = await run.value
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 2)
+        XCTAssertEqual(report.stop, .budget)
+        // The task runs on in the session; its answer is applied when it comes.
+        uploader.hold = { _, _ in false }
+        await uploader.release("c||0")
+        let done = try await waitUntil { try self.item("c").state == .backedUp }
+        XCTAssertTrue(done)
+    }
+
+    func testSkippedRowsDoNotHideDueRows() async throws {
+        var odd: Set<String> = []
+        for i in 1...5 {
+            let b = randomBytes(100 + i, seed: 3)
+            library.put("x\(i)", b, takenAtMs: Int64(1000 + i))
+            odd.insert(sha256Hex(b))
+        }
+        library.put("g", randomBytes(99, seed: 4), takenAtMs: 10)
+        let oddShas = odd
+        // The newest five get a verdict this engine does not know: skipped for this run (R7).
+        server.override = { r in
+            guard r.path == "/api/v1/sync/check",
+                  let items = (try? JSONDecoder().decode(JSONValue.self, from: r.body))?["items"]?.arrayValue,
+                  items.contains(where: { oddShas.contains($0["sha256"]?.stringValue ?? "") }) else { return nil }
+            let results = items.map { it -> String in
+                let sha = it["sha256"]?.stringValue ?? ""
+                return #"{"sha256":"\#(sha)","verdict":"\#(oddShas.contains(sha) ? "brand_new_verdict" : "missing")"}"#
+            }
+            return .json(200, #"{"results":[\#(results.joined(separator: ","))]}"#)
+        }
+        _ = await controller(checkBatch: 2).runOnce(budget: RunBudget())
+        XCTAssertEqual(try item("g").state, .backedUp)
+        for i in 1...5 { XCTAssertEqual(try item("x\(i)").state, .hashed) }
+    }
+
+    func testBackgroundPinRejectionPausesAsTls() async throws {
+        library.put("pin", randomBytes(300))
+        // Task 14's hook: the background session reports a refused certificate this way.
+        uploader.errorFor = { _ in TransportFailure(code: .cancelled, sent: false, pinRejectedHost: "pictunnel.test") }
+        let c = controller()
+        let report = await c.runOnce(budget: RunBudget())
+        XCTAssertEqual(report.stop, .serverUntrusted)
+        XCTAssertEqual(try item("pin").attempts, 0)
+        let status = await c.status()
+        XCTAssertEqual(status.pauseReason, EngineController.untrustedPauseReason)
+    }
+
+    func testStaleCompletionRemovesItsChunk() async throws {
+        library.put("s", randomBytes(300))
+        let c = controller()
+        _ = await c.runOnce(budget: RunBudget())
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        let chunk = staging.appendingPathComponent(EngineController.stagedName(itemId: "s") + ".1000.chunk")
+        try Data("x".utf8).write(to: chunk)
+        await c.handleUploadCompletion(taskDescription: "s|u1|1000", status: 204, headers: [:], error: nil)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: chunk.path))
+        XCTAssertEqual(try item("s").state, .backedUp)
+    }
+
 
     /// Review Focus 2: an edit after backup is a new asset, and the old one is never freed by mistake.
     func testEditedAssetRehashed() async throws {

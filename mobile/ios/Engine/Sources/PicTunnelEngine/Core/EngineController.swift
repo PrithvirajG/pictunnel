@@ -103,8 +103,10 @@ public final class EngineController: @unchecked Sendable {
         if markSwept() { await sweepStaging() }
 
         if let pause = settings.pause() {
-            if let until = pause.untilMs, clock.nowMs() >= until {
-                // A server-caused pause has expired: try again.
+            let now = clock.nowMs()
+            if let until = pause.untilMs, now >= until || until > now + Pipeline.maxPauseMs {
+                // A server-caused pause has expired (or its end is further away than any pause
+                // lasts, so the clock jumped back, R10): try again.
                 try? settings.clearPause()
             } else {
                 ctx.stop(.paused)
@@ -131,6 +133,8 @@ public final class EngineController: @unchecked Sendable {
         let concurrency = settings.get().uploadConcurrency
         var exhausted = true
         for _ in 0..<config.maxPasses {
+            if Task.isCancelled { ctx.stop(.budget) }
+            if ctx.stopped { exhausted = false; break }
             let before = ctx.counters.transitions
             await pipeline.hashPhase(ctx)
             if ctx.stopped { exhausted = false; break }
@@ -142,6 +146,10 @@ public final class EngineController: @unchecked Sendable {
         watcher?.cancel()
         // Anything still uploading runs on in the session; its completion is applied when it comes.
         await tracker.detachAll()
+        // Answers that came in for tasks this run stopped waiting for are applied now.
+        for (key, raw) in await tracker.takeEarly() {
+            await applyOrphan(key, raw)
+        }
         if exhausted, !ctx.stopped, hasDueWork() {
             // The pass limit ran out with work due: the next run should come at once.
             ctx.stop(.budget)
@@ -176,7 +184,13 @@ public final class EngineController: @unchecked Sendable {
     /// A finished upload task (M§6). The platform layer calls this for every completion of the
     /// background session, including those delivered after a relaunch; the description
     /// `"<itemId>|<uploadId>|<offset>"` maps it back to its item row. A completion that no longer
-    /// matches the row (stale, foreign or malformed) changes nothing.
+    /// matches the row (stale, foreign or malformed) changes nothing, and so does a second
+    /// delivery of the same completion.
+    ///
+    /// `error` is classified like any engine request (`Transport.classify`). Hook for the
+    /// background session (Task 14): report a certificate the pinning delegate refused as
+    /// `TransportFailure(code:, sent: false, pinRejectedHost: host)`; it then classifies as `tls`
+    /// and pauses backup ("server certificate changed") instead of counting an attempt.
     public func handleUploadCompletion(taskDescription: String, status: Int?, headers: [String: String],
                                        body: Data? = nil, error: Error?) async {
         let raw: ServerOutcome
@@ -188,9 +202,16 @@ public final class EngineController: @unchecked Sendable {
         } else {
             raw = ServerOutcome(transport: .reset)
         }
-        if await tracker.complete(taskDescription, raw) { return }
-        guard let desc = TaskDescription(parsing: taskDescription) else { return }
-        await pipeline.handleOrphan(desc, raw)
+        guard await tracker.complete(taskDescription, raw) == .orphan else { return }
+        await applyOrphan(taskDescription, raw)
+    }
+
+    /// Applies an orphan completion while the tracker holds the item's claim, then releases it.
+    private func applyOrphan(_ key: String, _ raw: ServerOutcome) async {
+        if let desc = TaskDescription(parsing: key) {
+            await pipeline.handleOrphan(desc, raw)
+        }
+        await tracker.finishOrphan(key)
         reporter.publish()
     }
 
@@ -240,7 +261,16 @@ public final class EngineController: @unchecked Sendable {
 
     public func getSettings() async -> EngineSettings { settings.get() }
 
-    public func setSettings(_ s: EngineSettings) async throws { try settings.set(s) }
+    /// Saves the settings. A change of what is backed up (unedited originals, videos, albums)
+    /// forgets the scan token, so the next scan reports the whole library again under the new scope.
+    public func setSettings(_ s: EngineSettings) async throws {
+        let old = settings.get()
+        try settings.set(s)
+        if old.keepUneditedOriginals != s.keepUneditedOriginals || old.includeVideos != s.includeVideos
+            || old.allAlbums != s.allAlbums || Set(old.albumIds) != Set(s.albumIds) {
+            try db.setScanToken(scope: Pipeline.scanScope, token: nil)
+        }
+    }
 
     // MARK: - phone index, attention, activity
 

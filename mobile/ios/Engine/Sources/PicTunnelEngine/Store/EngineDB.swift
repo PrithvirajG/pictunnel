@@ -280,16 +280,20 @@ extension EngineDB {
     /// come from a clock that jumped back, so it counts as due (R10).
     public static let maxBackoffMs: Int64 = 15 * 60 * 1000
 
-    /// Items in `states` whose backoff has passed, newest first.
-    public func due(_ states: [ItemState], nowMs: Int64, limit: Int) throws -> [Item] {
+    /// Items in `states` whose backoff has passed, newest first (`takenAtMs`, then `localId`, both
+    /// descending), after the exclusive keyset position `after`.
+    public func due(_ states: [ItemState], nowMs: Int64, after: PageKey? = nil, limit: Int) throws -> [Item] {
         try read { db in
             let next = Column("nextAttemptAtMs")
-            return try Item
+            let taken = Column("takenAtMs")
+            let localId = Column("localId")
+            var request = Item
                 .filter(states.map(\.rawValue).contains(Column("state")))
                 .filter(next == nil || next <= nowMs || next > nowMs + Self.maxBackoffMs)
-                .order(Column("takenAtMs").desc, Column("localId").desc)
-                .limit(max(limit, 0))
-                .fetchAll(db)
+            if let key = after {
+                request = request.filter(taken < key.takenAtMs || (taken == key.takenAtMs && localId < key.localId))
+            }
+            return try request.order(taken.desc, localId.desc).limit(max(limit, 0)).fetchAll(db)
         }
     }
 
