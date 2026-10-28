@@ -1,18 +1,23 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/backup/backup_providers.dart';
 import 'theme/tokens.dart';
 import 'theme/typography.dart';
 
-class AppShell extends StatelessWidget {
+class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.navigationShell});
 
   final StatefulNavigationShell navigationShell;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final queued = ref.watch(
+      backupStatusProvider.select((s) => s.value?.queued ?? 0),
+    );
     return Scaffold(
       body: navigationShell,
       bottomNavigationBar: DecoratedBox(
@@ -28,6 +33,9 @@ class AppShell extends StatelessWidget {
                 Expanded(
                   child: _NavItem(
                     tab: tab,
+                    label: tab.label == 'Backup' && queued > 0
+                        ? 'Backup · $queued'
+                        : tab.label,
                     active: navigationShell.currentIndex == i,
                     onTap: () => navigationShell.goBranch(
                       i,
@@ -60,11 +68,13 @@ const _tabs = <_Tab>[
 class _NavItem extends StatelessWidget {
   const _NavItem({
     required this.tab,
+    required this.label,
     required this.active,
     required this.onTap,
   });
 
   final _Tab tab;
+  final String label;
   final bool active;
   final VoidCallback onTap;
 
@@ -74,7 +84,7 @@ class _NavItem extends StatelessWidget {
     return Semantics(
       button: true,
       selected: active,
-      label: tab.label,
+      label: label,
       excludeSemantics: true,
       child: InkWell(
         onTap: onTap,
@@ -89,7 +99,7 @@ class _NavItem extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                tab.label,
+                label,
                 style: bodyStyle(
                   size: 12,
                   weight: active ? 600 : 500,

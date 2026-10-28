@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pictunnel/app/app.dart';
 import 'package:pictunnel/app/router.dart';
+import 'package:pictunnel/features/timeline/timeline_model.dart';
+import 'package:pictunnel/features/timeline/timeline_providers.dart';
 
 void main() {
   testWidgets('shell golden', (t) async {
@@ -11,7 +13,10 @@ void main() {
     addTearDown(t.view.reset);
     await t.pumpWidget(
       ProviderScope(
-        overrides: [serverConnectedProvider.overrideWith((_) async => true)],
+        overrides: [
+      serverConnectedProvider.overrideWith((_) async => true),
+      timelineMonthsProvider.overrideWith((_) => Stream.value(<MonthKey>[])),
+    ],
         child: const PicTunnelApp(),
       ),
     );

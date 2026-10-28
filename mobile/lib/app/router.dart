@@ -8,6 +8,7 @@ import '../features/attention/attention_screen.dart';
 import '../features/backup/backup_screen.dart';
 import '../features/pairing/manual_server_screen.dart';
 import '../features/pairing/pair_screen.dart';
+import '../features/timeline/timeline_screen.dart';
 import 'shell.dart';
 import 'theme/tokens.dart';
 import 'theme/typography.dart';
@@ -62,7 +63,7 @@ GoRouter buildRouter(Ref ref) {
             routes: [
               GoRoute(
                 path: '/photos',
-                builder: (_, _) => const PlaceholderScreen('Photos'),
+                builder: (_, _) => const TimelineScreen(),
                 routes: [
                   GoRoute(
                     path: ':assetKey',
