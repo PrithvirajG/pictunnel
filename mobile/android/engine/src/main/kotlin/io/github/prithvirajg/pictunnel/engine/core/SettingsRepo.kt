@@ -77,7 +77,7 @@ class SettingsRepo(
 
     suspend fun setLastRunAtMs(ms: Long) = put(LAST_RUN_AT, ms.toString())
 
-    /** The server this phone was last paired with; kept across unpair so pairing the same server again keeps the index. */
+    /** The server this phone is paired with (cleared on unpair); a different one on pairing starts a fresh index. */
     suspend fun pairedServerId(): String? = dao.get(SERVER_ID)
 
     /** The paired server's display name, cached so `serverInfo` works offline. */
@@ -88,6 +88,11 @@ class SettingsRepo(
         name: String,
     ) {
         dao.putAll(listOf(SettingEntity(SERVER_ID, serverId), SettingEntity(SERVER_NAME, name)))
+    }
+
+    /** Unpair: forgets the server identity, its name, the pause and the last run. */
+    suspend fun clearServer() {
+        dao.removeAll(listOf(SERVER_ID, SERVER_NAME, PAUSE_REASON, PAUSE_UNTIL, LAST_RUN_AT))
     }
 
     private suspend fun put(

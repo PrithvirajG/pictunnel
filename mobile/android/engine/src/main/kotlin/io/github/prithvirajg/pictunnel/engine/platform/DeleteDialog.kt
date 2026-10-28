@@ -22,15 +22,16 @@ import kotlinx.coroutines.withContext
  * registered before STARTED with the same generated key every time: when the
  * activity is recreated (rotation, dark-mode switch) while the dialog is up,
  * the new activity's registration receives the result and completes the
- * request that is still waiting here. A request outlives the activity only
- * across a configuration change; when the activity is really finished the
- * request resolves as declined, so free up space never hangs.
+ * request that is still waiting here. When the activity is finishing the
+ * request resolves as declined, so free up space never hangs; any other
+ * destruction is followed by a recreation that delivers the answer.
  */
 object DeleteDialog : IntentSenderLauncher {
     private val serial = Mutex()
 
-    private var launcher: ActivityResultLauncher<IntentSenderRequest>? = null
-    private var pending: CompletableDeferred<Boolean>? = null
+    @Volatile private var launcher: ActivityResultLauncher<IntentSenderRequest>? = null
+
+    @Volatile private var pending: CompletableDeferred<Boolean>? = null
 
     /** True while an activity that can show the dialog is registered. */
     val attached: Boolean get() = launcher != null
@@ -43,7 +44,7 @@ object DeleteDialog : IntentSenderLauncher {
             object : DefaultLifecycleObserver {
                 override fun onDestroy(owner: LifecycleOwner) {
                     if (launcher === l) launcher = null
-                    if (!activity.isChangingConfigurations) resolve(false)
+                    if (activity.isFinishing) resolve(false)
                 }
             },
         )

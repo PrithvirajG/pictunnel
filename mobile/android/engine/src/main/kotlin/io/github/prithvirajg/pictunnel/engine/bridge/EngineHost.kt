@@ -11,6 +11,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.IOException
 
@@ -25,6 +26,9 @@ class EngineHost(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val deliver: (Runnable) -> Unit = MAIN::post,
 ) : EngineHostApi {
+    /** Cancels calls still running (the Flutter engine went away; their replies have nowhere to go). */
+    fun close() = scope.cancel()
+
     private fun <T> call(
         callback: (Result<T>) -> Unit,
         block: suspend () -> T,
@@ -161,6 +165,7 @@ class EngineHost(
          *   pair-URI errors pass through;
          * - auth: `needs_repair`, `client_too_old` or `unreachable`;
          * - server answers: the problem code, else `http_<status>`;
+         * - a missing item: `not_found`; revoked media access: `permission`;
          * - other I/O: `unreachable`; anything else `internal`.
          */
         fun errorFor(e: Throwable): FlutterError =
@@ -187,6 +192,9 @@ class EngineHost(
                     val code = raw.problem()?.code ?: raw.transport?.let { if (it in UNREACHABLE) "unreachable" else it }
                     FlutterError(code ?: "http_${raw.status}", e.message)
                 }
+                // Thumbnails and gallery reads: the item is gone, or access was revoked.
+                is java.io.FileNotFoundException -> FlutterError("not_found", e.message)
+                is SecurityException -> FlutterError("permission", e.message)
                 is IOException -> FlutterError("unreachable", e.message)
                 is IllegalArgumentException -> FlutterError("invalid_request", e.message)
                 else -> FlutterError("internal", e.toString())

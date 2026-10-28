@@ -46,50 +46,47 @@ class AndroidHostBackend(
     override suspend fun pairQr(
         qrUri: String,
         deviceName: String,
-    ): Paired = afterPair(pairer().pair(qrUri, deviceName))
+    ): Paired = afterPair(services.endSession { pairer().pair(qrUri, deviceName) })
 
     override suspend fun pairManual(
         serverUrl: String,
         code: String,
         pin: String,
         deviceName: String,
-    ): Paired = afterPair(pairer().pairManual(serverUrl, code, pin, deviceName))
+    ): Paired = afterPair(services.endSession { pairer().pairManual(serverUrl, code, pin, deviceName) })
 
-    private fun pairer() = Pairer(services.store, services.clientHeader, services.appVersion)
+    private fun pairer() = Pairer(services.store, services.clientHeader, services.appVersion, services.pairingHttp)
 
     /**
-     * Credentials are stored: rebuild the session and learn the server's name.
-     * A different server than last time starts a fresh index (asset ids and
-     * states belong to the old server); cached hashes are kept.
+     * Credentials are stored (the old session ended first): build the new
+     * session and record the server; a different server starts a fresh index.
      */
     private suspend fun afterPair(r: PairResult): Paired {
-        services.drop()
         val s = session()
-        val previous = services.settings.pairedServerId()
-        if (previous != null && previous != r.serverId) {
-            services.db.items().clear()
-            services.db.scanState().clear()
-            services.settings.clearPause()
-        }
-        val name =
-            try {
-                s.client.serverInfo().name
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
-            } ?: services.settings.serverName()?.takeIf { previous == r.serverId } ?: DEFAULT_NAME
-        services.settings.setServer(r.serverId, name)
-        return Paired(r, name)
+        return Paired(r, services.account.adoptServer(r.serverId) { s.client.serverInfo().name })
     }
 
-    override suspend fun trustOnFirstUse(serverUrl: String): ServerFingerprint = TrustOnFirstUse(services.clientHeader).probe(serverUrl)
+    override suspend fun trustOnFirstUse(serverUrl: String): ServerFingerprint =
+        TrustOnFirstUse(services.clientHeader, services.pairingHttp).probe(serverUrl)
 
-    /** No more background work, credentials wiped. The local index stays for a re-pair with the same server. */
+    /**
+     * M§3: a best-effort `logout` (at most [LOGOUT_TIMEOUT_MS], failures
+     * ignored), no more background work, then the credentials are wiped under
+     * the refresh lock (an in-flight refresh cannot restore them) and the
+     * index, cursors, activity log and server identity are cleared. Cached
+     * hashes stay.
+     */
     override suspend fun unpair() {
+        try {
+            services.session()?.let { s -> withTimeoutOrNull(LOGOUT_TIMEOUT_MS) { s.client.logout() } }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Offline or already revoked: unpairing is local first.
+        }
         Scheduling.cancelAll(app)
-        services.store.wipe()
-        services.drop()
+        services.endSession { services.store.wipe() }
+        services.account.forget()
     }
 
     override suspend fun accessToken(): String = session().auth.accessToken()
@@ -185,6 +182,7 @@ class AndroidHostBackend(
 
     companion object {
         const val NOT_PAIRED = "not_paired"
-        private const val DEFAULT_NAME = "PicTunnel"
+        const val LOGOUT_TIMEOUT_MS = 5_000L
+        private const val DEFAULT_NAME = Account.DEFAULT_NAME
     }
 }

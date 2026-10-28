@@ -321,6 +321,10 @@ class EngineHostTest {
         assertEquals("unreachable", err("getAccessToken"))
         backend.failWith = java.io.IOException("boom")
         assertEquals("unreachable", err("saveToGallery", "a", "b", "image/jpeg"))
+        backend.failWith = java.io.FileNotFoundException("gone")
+        assertEquals("not_found", err("phoneThumbnail", "id", 96L))
+        backend.failWith = SecurityException("revoked")
+        assertEquals("permission", err("phoneThumbnail", "id", 96L))
         backend.failWith = IllegalStateException("bug")
         assertEquals("internal", err("listAlbums"))
         backend.undoOk = false

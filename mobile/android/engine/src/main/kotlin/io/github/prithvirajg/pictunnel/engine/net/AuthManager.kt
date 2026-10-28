@@ -92,6 +92,9 @@ class AuthManager(
 
     @Volatile private var endpoints: Endpoints? = endpoints
 
+    /** Set by [close]: this session is over and never refreshes again. */
+    @Volatile private var closed = false
+
     /** A valid access token, refreshing first when there is none or it is about to expire. */
     suspend fun accessToken(): String {
         val current = access
@@ -115,9 +118,24 @@ class AuthManager(
         accessValidUntil = 0
     }
 
+    /**
+     * Ends this session (unpair, or a new pairing about to store credentials):
+     * waits for an in-flight refresh to finish, forgets the access token, runs
+     * [block] (for example the credential wipe) under the refresh lock, and
+     * refuses every later refresh.
+     */
+    suspend fun <T> close(block: suspend () -> T): T =
+        mutex.withLock {
+            closed = true
+            access = null
+            accessValidUntil = 0
+            block()
+        }
+
     /** Single flight: a caller whose token was already replaced gets the new one without a request. */
     private suspend fun refresh(stale: String?): RefreshOutcome =
         mutex.withLock {
+            if (closed) return@withLock RefreshOutcome.NeedsRepair(NO_CREDENTIALS)
             val current = access
             if (current != null && current != stale && clock() < accessValidUntil) {
                 return@withLock RefreshOutcome.Refreshed(current)
@@ -146,8 +164,13 @@ class AuthManager(
                     runCatching {
                         Problems.json.decodeFromJsonElement(TokenPair.serializer(), out.body ?: JsonObject(emptyMap()))
                     }.getOrNull() ?: return RefreshOutcome.Transient(out.copy(body = null))
-                // Persist the rotated refresh token before anything uses the new access token.
-                store.save(creds.copy(refreshToken = pair.refreshToken))
+                // Persist the rotated refresh token before anything uses the new access token,
+                // unless the credentials were wiped or replaced while the refresh was in flight.
+                if (!store.compareAndSave(creds.refreshToken, creds.copy(refreshToken = pair.refreshToken))) {
+                    access = null
+                    accessValidUntil = 0
+                    return RefreshOutcome.NeedsRepair(NO_CREDENTIALS)
+                }
                 access = pair.accessToken
                 accessValidUntil = clock() + ACCESS_REFRESH_AFTER_MS
                 RefreshOutcome.Refreshed(pair.accessToken)

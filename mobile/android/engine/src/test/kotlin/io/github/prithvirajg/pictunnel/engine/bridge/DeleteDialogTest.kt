@@ -90,6 +90,7 @@ class DeleteDialogTest {
     @Test fun finishingTheActivityDeclinesInsteadOfHanging() {
         val c = Robolectric.buildActivity(DialogHostActivity::class.java).setup()
         val pending = launch()
+        c.get().finish()
         c.pause().stop().destroy()
         idle()
         assertFalse(pending.getCompleted())

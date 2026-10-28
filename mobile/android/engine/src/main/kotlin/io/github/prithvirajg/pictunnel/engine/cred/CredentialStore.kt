@@ -30,4 +30,21 @@ interface CredentialStore {
     fun save(c: Credentials)
 
     fun wipe()
+
+    /**
+     * Saves [c] only while the stored refresh token is still
+     * [expectedRefreshToken]: false when the credentials were wiped or
+     * replaced meanwhile (unpair or a new pairing during a refresh), so a
+     * late refresh never resurrects them. Atomic with [save] and [wipe] when
+     * they synchronize on the store, as the implementations do.
+     */
+    fun compareAndSave(
+        expectedRefreshToken: String,
+        c: Credentials,
+    ): Boolean =
+        synchronized(this) {
+            if (load()?.refreshToken != expectedRefreshToken) return@synchronized false
+            save(c)
+            true
+        }
 }

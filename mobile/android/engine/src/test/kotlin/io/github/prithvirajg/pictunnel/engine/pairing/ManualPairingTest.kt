@@ -58,6 +58,17 @@ class ManualPairingTest {
         assertEquals(TrustOnFirstUse.NOT_PICTUNNEL, e.code)
     }
 
+    @Test fun aFailedHandshakeIsUnreachableNotAPinMismatch() {
+        // The accept-any probe cannot have a pin mismatch: a handshake failure means the server is unreachable over TLS.
+        val failing =
+            okhttp3.OkHttpClient
+                .Builder()
+                .addInterceptor { throw javax.net.ssl.SSLHandshakeException("handshake_failure") }
+                .build()
+        val e = assertThrows(PairException::class.java) { runBlocking { TrustOnFirstUse(CLIENT, failing).probe(origin()) } }
+        assertEquals("unreachable", e.code)
+    }
+
     @Test fun manualPairPinsTheConfirmedFingerprint() {
         server.enqueue(json(200, redeemed))
         val store = FakeStore(null)

@@ -4,6 +4,7 @@ import io.github.prithvirajg.pictunnel.engine.net.ClientHeaderInterceptor
 import io.github.prithvirajg.pictunnel.engine.net.PinningTrustManager
 import io.github.prithvirajg.pictunnel.engine.net.Problems
 import io.github.prithvirajg.pictunnel.engine.net.ServerInfo
+import io.github.prithvirajg.pictunnel.engine.net.involvesTls
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -36,7 +37,8 @@ data class ServerFingerprint(
  * presents and reports its SPKI fingerprint. Nothing secret is sent; the
  * connection is trusted only later, by pinning the fingerprint the user
  * confirmed ([Pairer.pairManual]). Errors are [PairException]s: a transport
- * kind (`offline`, `timeout`, `reset`), `insecure_endpoint`, `invalid_url` or
+ * kind (`offline`, `timeout`, `reset`), `unreachable` (including a failed
+ * handshake), `insecure_endpoint`, `invalid_url` or
  * `not_pictunnel`.
  */
 class TrustOnFirstUse(
@@ -80,7 +82,10 @@ class TrustOnFirstUse(
                     http.newCall(request).execute().use { r -> r.code to r.body.string() }
                 }
             } catch (e: IOException) {
-                throw PairException(Problems.transport(e).transport ?: "offline")
+                // This probe accepts any certificate, so a failed handshake is not a pin
+                // mismatch: the server could not be reached over TLS.
+                val kind = Problems.transport(e).transport
+                throw PairException(if (kind == null || kind == "tls" || e.involvesTls()) UNREACHABLE else kind)
             }
         val info =
             if (code == 200) runCatching { JSON.decodeFromString(ServerInfo.serializer(), body) }.getOrNull() else null
@@ -91,6 +96,7 @@ class TrustOnFirstUse(
 
     companion object {
         const val NOT_PICTUNNEL = "not_pictunnel"
+        const val UNREACHABLE = "unreachable"
         private const val INFO_PATH = "/api/v1/server/info"
         private const val TIMEOUT_S = 10L
         private val JSON = Json { ignoreUnknownKeys = true }

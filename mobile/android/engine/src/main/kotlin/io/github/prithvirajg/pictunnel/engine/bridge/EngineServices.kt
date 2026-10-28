@@ -16,6 +16,7 @@ import io.github.prithvirajg.pictunnel.engine.platform.KeystoreCredentialStore
 import io.github.prithvirajg.pictunnel.engine.platform.MediaStoreScanner
 import io.github.prithvirajg.pictunnel.engine.sched.EngineRuntime
 import io.github.prithvirajg.pictunnel.engine.store.EngineDb
+import okhttp3.OkHttpClient
 
 /**
  * The process-wide engine graph (M§4): the database, the credential store and
@@ -32,6 +33,10 @@ class EngineServices private constructor(
     val store: CredentialStore by lazy { KeystoreCredentialStore.create(app) }
     val settings: SettingsRepo by lazy { SettingsRepo(db.settings()) }
     val relay = EventsRelay(onNeedsRepair = ::drop)
+    val account: Account by lazy { Account(db, settings, EngineRuntime.runs) }
+
+    /** One connection pool and dispatcher for the pairing probes (trust on first use, redeem). */
+    val pairingHttp: OkHttpClient by lazy { OkHttpClient() }
 
     val appVersion: String =
         runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "0.0.0"
@@ -70,6 +75,21 @@ class EngineServices private constructor(
                 relay,
             )
         return Session(creds, endpoints, auth, client, controller).also { session = it }
+    }
+
+    /**
+     * Ends the current session before credentials change: waits for its
+     * in-flight refresh, then runs [block] (the wipe or the new pairing's
+     * save) under the refresh lock, so a late refresh cannot overwrite it.
+     */
+    suspend fun <T> endSession(block: suspend () -> T): T {
+        val s =
+            synchronized(this) {
+                val current = session
+                session = null
+                current
+            }
+        return if (s != null) s.auth.close(block) else block()
     }
 
     /** Forgets the session (credentials changed or wiped); the next [session] call rebuilds it. */

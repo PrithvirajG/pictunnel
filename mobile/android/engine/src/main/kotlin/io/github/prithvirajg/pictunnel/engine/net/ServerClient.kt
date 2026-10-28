@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 
 /** `GET /api/v1/server/info` (P§11.1). Unknown fields are ignored. */
@@ -60,6 +61,10 @@ class ServerClient(
             Problems.json.decodeFromJsonElement(ServerInfo.serializer(), raw.body ?: JsonObject(emptyMap()))
         }.getOrElse { throw ServerException(raw) }
     }
+
+    /** `POST /auth/logout`: revokes this device's session on the server. Returns the raw outcome. */
+    suspend fun logout(): ServerOutcome =
+        send(LOGOUT_PATH) { Request.Builder().url(it).post(ByteArray(0).toRequestBody(null)).build() }
 
     /** `POST /sync/check` for 1 to 1000 items; `confirmOnDisk` for free-up-space (P§7.8). */
     suspend fun check(
@@ -176,6 +181,7 @@ class ServerClient(
 
     companion object {
         const val SERVER_INFO_PATH = "/api/v1/server/info"
+        const val LOGOUT_PATH = "/api/v1/auth/logout"
         const val TOMBSTONES_PATH = "/api/v1/tombstones"
         const val ASSETS_PATH = "/api/v1/assets"
         private val SHA256_HEX = Regex("^[0-9a-f]{64}$")

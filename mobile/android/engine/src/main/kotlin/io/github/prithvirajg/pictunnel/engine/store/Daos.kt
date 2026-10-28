@@ -196,6 +196,10 @@ interface ActivityDao {
     @Query("SELECT * FROM activity ORDER BY id DESC LIMIT :limit")
     suspend fun latest(limit: Int): List<ActivityEntity>
 
+    /** Forgets the whole log (unpair or a different server). */
+    @Query("DELETE FROM activity")
+    suspend fun clear(): Int
+
     /** Keeps only the newest [keep] rows. */
     @Query("DELETE FROM activity WHERE id NOT IN (SELECT id FROM activity ORDER BY id DESC LIMIT :keep)")
     suspend fun trim(keep: Int): Int

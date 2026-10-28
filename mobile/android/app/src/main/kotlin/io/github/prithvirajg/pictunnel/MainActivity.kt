@@ -17,6 +17,8 @@ import io.github.prithvirajg.pictunnel.engine.platform.DeleteDialog
  * [onCreate] so a dialog result survives activity recreation.
  */
 class MainActivity : FlutterFragmentActivity() {
+    private var host: EngineHost? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DeleteDialog.register(this)
@@ -26,7 +28,9 @@ class MainActivity : FlutterFragmentActivity() {
         super.configureFlutterEngine(flutterEngine)
         val services = EngineServices.get(this)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
-        EngineHostApi.setUp(messenger, EngineHost(AndroidHostBackend(this, services) { DeleteDialog.takeIf { it.attached } }))
+        val h = EngineHost(AndroidHostBackend(this, services) { DeleteDialog.takeIf { it.attached } })
+        host = h
+        EngineHostApi.setUp(messenger, h)
         services.relay.attach(EngineEventsApi(messenger))
     }
 
@@ -34,6 +38,8 @@ class MainActivity : FlutterFragmentActivity() {
         val messenger = flutterEngine.dartExecutor.binaryMessenger
         EngineHostApi.setUp(messenger, null)
         EngineServices.get(this).relay.detach()
+        host?.close()
+        host = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 }
