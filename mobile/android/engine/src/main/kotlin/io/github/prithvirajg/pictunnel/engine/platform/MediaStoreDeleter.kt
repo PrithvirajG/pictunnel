@@ -24,8 +24,9 @@ fun interface IntentSenderLauncher {
 
 /**
  * An [IntentSenderLauncher] on an activity's [ActivityResultRegistry]
- * (`StartIntentSenderForResult`). The bridge (Task 10) builds one from the
- * Flutter activity for each free-up request.
+ * (`StartIntentSenderForResult`), registered per launch. Tests build one per
+ * activity for each request; the app uses [DeleteDialog], which also survives
+ * activity recreation.
  */
 class ActivityIntentSenderLauncher(
     private val registry: ActivityResultRegistry,

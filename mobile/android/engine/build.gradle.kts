@@ -80,6 +80,8 @@ ksp {
 
 dependencies {
     compileOnly("io.flutter:flutter_embedding_debug:$flutterEngineVersion")
+    // EngineHostTest drives the bridge through the real generated channels and codec.
+    testImplementation("io.flutter:flutter_embedding_debug:$flutterEngineVersion")
 
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")

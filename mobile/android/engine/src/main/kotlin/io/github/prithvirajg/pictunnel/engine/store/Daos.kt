@@ -122,6 +122,10 @@ interface ItemsDao {
     @Query("SELECT COALESCE(SUM(size), 0) FROM items WHERE state = :state")
     suspend fun sumSize(state: ItemState): Long
 
+    /** Forgets every item (pairing with a different server); the hash cache is kept. */
+    @Query("DELETE FROM items")
+    suspend fun clear(): Int
+
     @Query("SELECT localId FROM items")
     suspend fun allIds(): List<String>
 

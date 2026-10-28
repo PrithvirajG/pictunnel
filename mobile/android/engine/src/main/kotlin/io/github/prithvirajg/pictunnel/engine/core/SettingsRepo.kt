@@ -77,6 +77,19 @@ class SettingsRepo(
 
     suspend fun setLastRunAtMs(ms: Long) = put(LAST_RUN_AT, ms.toString())
 
+    /** The server this phone was last paired with; kept across unpair so pairing the same server again keeps the index. */
+    suspend fun pairedServerId(): String? = dao.get(SERVER_ID)
+
+    /** The paired server's display name, cached so `serverInfo` works offline. */
+    suspend fun serverName(): String? = dao.get(SERVER_NAME)
+
+    suspend fun setServer(
+        serverId: String,
+        name: String,
+    ) {
+        dao.putAll(listOf(SettingEntity(SERVER_ID, serverId), SettingEntity(SERVER_NAME, name)))
+    }
+
     private suspend fun put(
         k: String,
         v: String,
@@ -94,5 +107,7 @@ class SettingsRepo(
         const val PAUSE_REASON = "pause_reason"
         const val PAUSE_UNTIL = "pause_until_ms"
         const val LAST_RUN_AT = "last_run_at_ms"
+        const val SERVER_ID = "server_id"
+        const val SERVER_NAME = "server_name"
     }
 }

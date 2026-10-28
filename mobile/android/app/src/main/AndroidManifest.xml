@@ -1,7 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Media, network, notification and foreground-service permissions, the
+         upload service, WorkManager's foreground service and the Pause receiver
+         come from the :engine manifest (merged). -->
     <application
-        android:label="pictunnel"
-        android:name="${applicationName}"
+        android:label="PicTunnel"
+        android:name=".PicTunnelApp"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

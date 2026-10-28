@@ -58,16 +58,42 @@ class Pairer(
                 is PairUriResult.Ok -> p.pair
                 is PairUriResult.Error -> throw PairException(p.code)
             }
-        val http = EngineHttp.newClient(info.fingerprint, clientHeader, base, systemTrust)
+        return redeem(info.serverId, info.endpoints, info.fingerprint, info.code, deviceName)
+    }
+
+    /**
+     * Manual setup (P§6.3 step 5): redeems [code] at [serverUrl] pinning [pin],
+     * the fingerprint the user confirmed after [TrustOnFirstUse]. The pin is
+     * the server's identity here, so no server id is compared.
+     */
+    suspend fun pairManual(
+        serverUrl: String,
+        code: String,
+        pin: String,
+        deviceName: String,
+    ): PairResult {
+        if (pin.isEmpty()) throw PairException("missing_fingerprint")
+        val origin = TrustOnFirstUse.origin(serverUrl)
+        return redeem(null, listOf(origin), pin, code, deviceName)
+    }
+
+    private suspend fun redeem(
+        expectedServerId: String?,
+        endpoints: List<String>,
+        fingerprint: String,
+        code: String,
+        deviceName: String,
+    ): PairResult {
+        val http = EngineHttp.newClient(fingerprint, clientHeader, base, systemTrust)
         val body =
             Problems.json.encodeToString(
                 RedeemRequest.serializer(),
-                RedeemRequest(info.code, RedeemDevice(deviceName, PLATFORM, appVersion)),
+                RedeemRequest(code, RedeemDevice(deviceName, PLATFORM, appVersion)),
             )
         val raw =
             try {
                 Problems.outcome(
-                    Endpoints(info.endpoints).execute(http, REDEEM_PATH) { url ->
+                    Endpoints(endpoints).execute(http, REDEEM_PATH) { url ->
                         Request.Builder().url(url).post(body.toRequestBody(JSON)).build()
                     },
                 )
@@ -80,8 +106,8 @@ class Pairer(
         val r =
             runCatching { Problems.json.decodeFromJsonElement(RedeemResponse.serializer(), raw.body ?: JsonObject(emptyMap())) }
                 .getOrElse { throw PairException("bad_response", raw.copy(body = null)) }
-        if (r.serverId != info.serverId) throw PairException("server_id_mismatch")
-        store.save(Credentials(r.serverId, info.endpoints, info.fingerprint, r.tokens.refreshToken, r.device.id))
+        if (expectedServerId != null && r.serverId != expectedServerId) throw PairException("server_id_mismatch")
+        store.save(Credentials(r.serverId, endpoints, fingerprint, r.tokens.refreshToken, r.device.id))
         return PairResult(r.serverId, r.user.username, r.device.id)
     }
 
