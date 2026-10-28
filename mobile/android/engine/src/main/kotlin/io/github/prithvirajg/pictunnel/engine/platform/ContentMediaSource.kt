@@ -1,8 +1,6 @@
 package io.github.prithvirajg.pictunnel.engine.platform
 
-import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
@@ -27,9 +25,7 @@ import java.security.MessageDigest
  */
 class ContentMediaSource(
     private val context: Context,
-    private val requireOriginal: () -> Boolean = {
-        context.checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
-    },
+    private val requireOriginal: () -> Boolean = { LocationAccess.granted(context) },
 ) : MediaSource {
     private val resolver = context.contentResolver
     private val cacheDir: File get() = File(context.cacheDir, "upload-copy")
@@ -75,29 +71,46 @@ class ContentMediaSource(
         }
     }
 
+    /**
+     * One copy per item and fingerprint, named `<item>-<fingerprint>`. Only
+     * stale copies of the same item (edited since) are removed, so concurrent
+     * uploads never lose each other's copies; copies untouched for a week are
+     * swept (the OS may also clear the cache directory).
+     */
     private fun copyToCache(
         localId: String,
         uri: Uri,
     ): File {
         val dir = cacheDir.apply { mkdirs() }
-        val name =
-            MessageDigest
-                .getInstance("SHA-256")
-                // Keyed by the fingerprint too: an edited item never reuses a stale copy.
-                .digest("$localId|${fingerprint(localId)}".toByteArray())
-                .take(12)
-                .joinToString("") { "%02x".format(it) }
+        val item = hash(localId)
+        val name = "$item-${hash(fingerprint(localId).toString())}"
         val target = File(dir, name)
-        // Only the item being uploaded keeps a copy.
-        dir.listFiles()?.filter { it.name != name }?.forEach { it.delete() }
+        val weekAgo = System.currentTimeMillis() - STALE_COPY_MS
+        dir.listFiles()?.forEach { f ->
+            val staleVersion = f.name.startsWith("$item-") && f.name != name
+            if (staleVersion || (f != target && f.lastModified() < weekAgo)) f.delete()
+        }
         if (!target.exists()) {
-            val tmp = File(dir, "$name.tmp")
+            val tmp = File(dir, "$name.${Thread.currentThread().id}.tmp")
             (resolver.openInputStream(uri) ?: throw FileNotFoundException(localId)).use { inp ->
                 tmp.outputStream().use { inp.copyTo(it) }
             }
-            if (!tmp.renameTo(target)) throw java.io.IOException("could not cache $localId")
+            if (!tmp.renameTo(target) && !target.exists()) throw java.io.IOException("could not cache $localId")
+            tmp.delete()
         }
+        target.setLastModified(System.currentTimeMillis())
         return target
+    }
+
+    private fun hash(s: String): String =
+        MessageDigest
+            .getInstance("SHA-256")
+            .digest(s.toByteArray())
+            .take(12)
+            .joinToString("") { "%02x".format(it) }
+
+    private companion object {
+        const val STALE_COPY_MS = 7L * 24 * 60 * 60 * 1000
     }
 
     /** At most [limit] bytes of [delegate]. */

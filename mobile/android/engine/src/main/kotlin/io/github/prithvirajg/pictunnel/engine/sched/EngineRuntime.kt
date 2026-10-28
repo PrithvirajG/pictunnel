@@ -106,7 +106,8 @@ object EngineRuntime {
         try {
             return runs.preempt { engine.freeUpSpace(localIds, deleter) }
         } finally {
-            Scheduling.requestSync(context, engine)
+            // The preempted SyncWorker may still be RUNNING: append after it rather than rely on its follow-up.
+            Scheduling.requestSync(context, engine, appendIfRunning = true)
         }
     }
 

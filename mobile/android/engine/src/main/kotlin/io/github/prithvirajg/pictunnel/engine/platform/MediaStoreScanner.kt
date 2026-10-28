@@ -77,8 +77,14 @@ class SystemMediaVolumes(
 
 /** Media read access from the granted permissions (M§4.6). */
 object MediaPermissions {
-    /** The runtime permissions to request on this API level. */
+    /**
+     * The runtime permissions to request on this API level. `ACCESS_MEDIA_LOCATION`
+     * keeps EXIF location in the originals (H1); its grant changes the bytes, see [OriginalBytesGuard].
+     */
     fun required(sdkInt: Int = Build.VERSION.SDK_INT): List<String> =
+        readPermissions(sdkInt) + Manifest.permission.ACCESS_MEDIA_LOCATION
+
+    private fun readPermissions(sdkInt: Int): List<String> =
         when {
             sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
                 listOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
@@ -118,18 +124,26 @@ class MediaStoreScanner(
     private val volumes: MediaVolumes,
     private val accessProvider: () -> MediaAccess,
     private val sdkInt: Int = Build.VERSION.SDK_INT,
+    private val beforeScan: suspend () -> Unit = {},
 ) : Scanner {
-    constructor(context: Context, settings: suspend () -> EngineSettings) : this(
+    /**
+     * The app's scanner. Before every scan it runs the [OriginalBytesGuard], so
+     * a change of `ACCESS_MEDIA_LOCATION` re-hashes what is not yet backed up.
+     */
+    constructor(context: Context, db: io.github.prithvirajg.pictunnel.engine.store.EngineDb, settings: suspend () -> EngineSettings) : this(
         context.contentResolver,
         settings,
         SystemMediaVolumes(context),
         { MediaPermissions.access(context) },
+        Build.VERSION.SDK_INT,
+        OriginalBytesGuard(db) { LocationAccess.granted(context) }::check,
     )
 
     override fun access(): MediaAccess = accessProvider()
 
     override suspend fun scan(since: List<ScanCursor>): ScanResult =
         withContext(Dispatchers.IO) {
+            beforeScan()
             val access = access()
             // Nothing is readable: keep the index as it is rather than dropping everything.
             if (access == MediaAccess.None) return@withContext ScanResult(emptyList(), emptyList(), since, fullRescan = false)

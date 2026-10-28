@@ -54,7 +54,7 @@ class PartialAccessInstrumentedTest {
             assertNotNull("the shell's file was not indexed", shellUri)
             val shellId = "external_primary:image:" + shellUri!!.lastPathSegment
 
-            val scanner = MediaStoreScanner(context) { EngineSettings() }
+            val scanner = MediaStoreScanner(context, testDb(context)) { EngineSettings() }
             assertEquals(MediaAccess.Partial, scanner.access())
             val r = scanner.scan(emptyList())
             assertTrue("partial access always scans in full", r.fullRescan)

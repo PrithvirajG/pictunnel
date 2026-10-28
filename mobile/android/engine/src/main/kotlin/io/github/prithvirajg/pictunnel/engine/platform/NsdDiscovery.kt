@@ -3,14 +3,16 @@ package io.github.prithvirajg.pictunnel.engine.platform
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
-import kotlinx.coroutines.CompletableDeferred
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 
 /** A PicTunnel server found on the LAN; TXT keys per the server's responder: `sid`, `v`, `api`, `fp16`. */
 data class DiscoveredServer(
@@ -102,25 +104,31 @@ class NsdDiscovery(
         }
 
     @Suppress("DEPRECATION") // resolveService works on every supported API level; one resolve at a time.
-    private suspend fun resolve(info: NsdServiceInfo): NsdServiceInfo? {
-        val done = CompletableDeferred<NsdServiceInfo?>()
-        nsd.resolveService(
-            info,
-            object : NsdManager.ResolveListener {
-                override fun onResolveFailed(
-                    serviceInfo: NsdServiceInfo,
-                    errorCode: Int,
-                ) {
-                    done.complete(null)
-                }
+    private suspend fun resolve(info: NsdServiceInfo): NsdServiceInfo? =
+        suspendCancellableCoroutine { cont ->
+            val listener =
+                object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(
+                        serviceInfo: NsdServiceInfo,
+                        errorCode: Int,
+                    ) {
+                        if (cont.isActive) cont.resume(null)
+                    }
 
-                override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                    done.complete(serviceInfo)
+                    override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                        if (cont.isActive) cont.resume(serviceInfo)
+                    }
+
+                    override fun onResolutionStopped(serviceInfo: NsdServiceInfo) {
+                        if (cont.isActive) cont.resume(null)
+                    }
                 }
-            },
-        )
-        return done.await()
-    }
+            // A timed-out resolve is stopped, or the next one fails with FAILURE_ALREADY_ACTIVE (API 34+).
+            cont.invokeOnCancellation {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) runCatching { nsd.stopServiceResolution(listener) }
+            }
+            nsd.resolveService(info, listener)
+        }
 
     companion object {
         const val SERVICE_TYPE = "_pictunnel._tcp"

@@ -50,8 +50,19 @@ class SyncWorker(
                 } finally {
                     ticker?.cancel()
                 }
-            } ?: return Result.success() // preempted (free up space, Pause): whoever stopped it reschedules
+            } ?: return preempted(engine)
         Scheduling.afterRun(applicationContext, engine, report, fromWorker = true)
+        return Result.success()
+    }
+
+    /**
+     * Free-up space or Pause stopped the run. A sync asked for meanwhile (free-up
+     * asks for one when it ends) must not be lost: it is appended after this worker.
+     */
+    private suspend fun preempted(engine: io.github.prithvirajg.pictunnel.engine.core.BackupEngine): Result {
+        if (EngineRuntime.runs.followUp.getAndSet(false)) {
+            Scheduling.requestSync(applicationContext, engine, fromWorker = true)
+        }
         return Result.success()
     }
 

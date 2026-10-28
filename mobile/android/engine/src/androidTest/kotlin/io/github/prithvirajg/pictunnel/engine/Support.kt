@@ -32,3 +32,9 @@ fun insertImage(
 
 /** Arbitrary bytes; MediaStore stores them without decoding. */
 fun sampleBytes(seed: Int): ByteArray = ByteArray(2048) { ((it * 31) xor seed).toByte() }
+
+/** A throwaway engine database for the scanner's location guard. */
+fun testDb(context: Context): io.github.prithvirajg.pictunnel.engine.store.EngineDb =
+    androidx.room.Room
+        .inMemoryDatabaseBuilder(context, io.github.prithvirajg.pictunnel.engine.store.EngineDb::class.java)
+        .build()

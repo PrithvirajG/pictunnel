@@ -160,13 +160,17 @@ class UploadForegroundService : Service() {
         }
     }
 
-    /** API 35+: the daily `dataSync` allowance ran out. Stop now; WorkManager continues later. */
+    /** API 35+: the daily `dataSync` allowance ran out. Stop now and hand the rest to WorkManager. */
     override fun onTimeout(
         startId: Int,
         fgsType: Int,
     ) {
         EngineRuntime.runs.cancelRuns()
         job?.cancel()
+        val app = applicationContext
+        CoroutineScope(Dispatchers.Default).launch {
+            EngineRuntime.engine(app)?.let { runCatching { Scheduling.requestSync(app, it, appendIfRunning = true) } }
+        }
         stopSelf()
     }
 

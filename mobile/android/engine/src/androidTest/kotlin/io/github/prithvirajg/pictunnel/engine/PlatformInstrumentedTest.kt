@@ -51,7 +51,7 @@ class PlatformInstrumentedTest {
         runBlocking {
             val bytes = sampleBytes(1)
             val localId = insertImage(context, "pt-scan-${System.nanoTime()}.jpg", bytes)
-            val scanner = MediaStoreScanner(context) { EngineSettings() }
+            val scanner = MediaStoreScanner(context, testDb(context)) { EngineSettings() }
             val first = scanner.scan(emptyList())
             val item = first.changed.single { it.localId == localId }
             assertEquals(bytes.size.toLong(), item.size)

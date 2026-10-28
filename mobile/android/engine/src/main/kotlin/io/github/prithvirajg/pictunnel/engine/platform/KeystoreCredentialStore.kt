@@ -56,7 +56,9 @@ class KeystoreCredentialStore(
             val s = json.decodeFromString(Stored.serializer(), String(plain, Charsets.UTF_8))
             Credentials(s.serverId, s.endpoints, s.pinSpki, s.refreshToken, s.deviceId)
         } catch (e: Exception) {
-            null
+            // Only "these credentials are unrecoverable" means pair again; a transient
+            // Keystore failure must not look like being unpaired.
+            if (unrecoverable(e)) null else throw e
         }
     }
 
@@ -80,6 +82,17 @@ class KeystoreCredentialStore(
         atomic.delete()
     }
 
+    private fun unrecoverable(e: Exception): Boolean =
+        e is javax.crypto.AEADBadTagException || // tampered, or encrypted under another (lost) key
+            e is android.security.keystore.KeyPermanentlyInvalidatedException ||
+            e is java.security.UnrecoverableKeyException ||
+            e is BadFormatException ||
+            e is kotlinx.serialization.SerializationException
+
+    private class BadFormatException(
+        message: String,
+    ) : Exception(message)
+
     private fun encrypt(plain: ByteArray): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         // The Keystore picks the IV (caller-provided IVs are refused for GCM keys by default).
@@ -96,9 +109,9 @@ class KeystoreCredentialStore(
     }
 
     private fun decrypt(bytes: ByteArray): ByteArray {
-        require(bytes.size > 2 && bytes[0] == VERSION) { "unknown credential file format" }
+        if (bytes.size <= 2 || bytes[0] != VERSION) throw BadFormatException("unknown credential file format")
         val ivLen = bytes[1].toInt() and 0xff
-        require(ivLen in 12..16 && bytes.size > 2 + ivLen) { "corrupt credential file" }
+        if (ivLen !in 12..16 || bytes.size <= 2 + ivLen) throw BadFormatException("corrupt credential file")
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, bytes, 2, ivLen))
         cipher.updateAAD(AAD)

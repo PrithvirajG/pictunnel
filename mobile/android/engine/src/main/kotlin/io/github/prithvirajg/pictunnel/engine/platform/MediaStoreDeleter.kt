@@ -68,7 +68,8 @@ class MediaStoreDeleter(
         val existing = withContext(Dispatchers.IO) { localIds.filter { exists(it) } }
         if (existing.isEmpty()) return emptySet()
         if (sdkInt >= Build.VERSION_CODES.R) {
-            launcher.launch(requestFactory(existing.map { LocalIds.uri(it) }))
+            // Only an accepted dialog confirms anything (M§4.5).
+            if (!launcher.launch(requestFactory(existing.map { LocalIds.uri(it) }))) return emptySet()
         } else {
             for (id in existing) deleteWithConsent(LocalIds.uri(id))
         }
@@ -85,6 +86,7 @@ class MediaStoreDeleter(
         }
     }
 
+    /** A failed query counts as "still there": an item is never reported freed on an unknown answer. */
     private fun exists(localId: String): Boolean =
-        resolver.query(LocalIds.uri(localId), arrayOf(MediaStore.MediaColumns._ID), null, null, null)?.use { it.moveToFirst() } ?: false
+        resolver.query(LocalIds.uri(localId), arrayOf(MediaStore.MediaColumns._ID), null, null, null)?.use { it.moveToFirst() } ?: true
 }

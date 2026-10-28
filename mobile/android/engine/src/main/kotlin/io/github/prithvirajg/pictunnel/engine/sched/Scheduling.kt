@@ -89,7 +89,10 @@ object Scheduling {
     /**
      * Asks for a sync in [delayMs]. Only one pipeline runs at a time:
      * - from the running worker itself, the request is appended after it;
-     * - while a sync runs, the running one is told to follow up when it ends;
+     * - while a sync runs, the running one is told to follow up when it ends,
+     *   and with [appendIfRunning] the request is also appended after it (for
+     *   callers that just stopped the running worker, which may already be past
+     *   its follow-up check);
      * - a pending sync that starts no later is kept (unless [replace], used when
      *   the constraints changed); otherwise it is replaced.
      */
@@ -99,6 +102,7 @@ object Scheduling {
         delayMs: Long = 0,
         fromWorker: Boolean = false,
         replace: Boolean = false,
+        appendIfRunning: Boolean = false,
     ) {
         val wm = WorkManager.getInstance(context)
         val request = syncRequest(engine.getSettings(), delayMs)
@@ -108,7 +112,11 @@ object Scheduling {
         }
         val infos = withContext(Dispatchers.IO) { wm.getWorkInfosForUniqueWork(SYNC).get() }
         if (infos.any { it.state == WorkInfo.State.RUNNING }) {
-            EngineRuntime.runs.followUp.set(true)
+            if (appendIfRunning) {
+                wm.enqueueUniqueWork(SYNC, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+            } else {
+                EngineRuntime.runs.followUp.set(true)
+            }
             return
         }
         val pending = infos.filter { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
