@@ -240,9 +240,10 @@ final class ChaosUploader: BackgroundUploader, @unchecked Sendable {
             // The first bytes reach the server, then the connection drops before any answer.
             let part = file.deletingLastPathComponent().appendingPathComponent("chaos-\(UUID().uuidString).bin")
             try Data(try Data(contentsOf: file).prefix(prefix)).write(to: part)
-            let sem = DispatchSemaphore(value: 0)
-            session.uploadTask(with: request, fromFile: part) { _, _, _ in sem.signal() }.resume()
-            sem.wait()
+            let session = self.session
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                session.uploadTask(with: request, fromFile: part) { _, _, _ in done.resume() }.resume()
+            }
             try? FileManager.default.removeItem(at: part)
         }
         Task {
