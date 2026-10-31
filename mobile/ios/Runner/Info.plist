@@ -72,6 +72,8 @@
 		<string>io.github.prithvirajg.pictunnel.process</string>
 		<string>io.github.prithvirajg.pictunnel.continued.*</string>
 	</array>
+	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
+	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

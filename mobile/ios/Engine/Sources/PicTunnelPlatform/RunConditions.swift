@@ -15,11 +15,13 @@ public final class RunConditions: @unchecked Sendable {
     private var lastSignature: String?
     private var pluggedIn = true
     private var _onNetworkChange: (() -> Void)?
+    private var pathWaiters: [OnceResume] = []
     private var observer: NSObjectProtocol?
 
     public init() {}
 
-    /// Called on a network change (not on the first path report).
+    /// Called on a network change, and once on the first path report (a run that waited for the
+    /// network state can start then).
     public var onNetworkChange: (() -> Void)? {
         get { lock.lock(); defer { lock.unlock() }; return _onNetworkChange }
         set { lock.lock(); _onNetworkChange = newValue; lock.unlock() }
@@ -38,18 +40,45 @@ public final class RunConditions: @unchecked Sendable {
         monitor.start(queue: queue)
     }
 
-    /// Why a run must wait under `settings`, or nil when it may start.
+    /// Why a run must wait under `settings`, or nil when it may start. With "Wi-Fi only" a run
+    /// also waits while the network state is not known yet (before the first path report).
     public func blocker(_ settings: EngineSettings) -> PauseReason? {
         lock.lock()
         let p = path
         let plugged = pluggedIn
         lock.unlock()
-        if settings.wifiOnly, let p, p.status == .satisfied,
-           p.isExpensive || !(p.usesInterfaceType(.wifi) || p.usesInterfaceType(.wiredEthernet)) {
-            return .wifiRequired
-        }
+        if settings.wifiOnly, !Self.unmetered(p) { return .wifiRequired }
         if settings.chargingOnly, !plugged { return .chargingRequired }
         return nil
+    }
+
+    /// True on a satisfied, non-expensive Wi-Fi or wired path.
+    public var onUnmeteredNetwork: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return Self.unmetered(path)
+    }
+
+    /// Waits until the first path report, at most `timeoutMs` (a background launch asks before
+    /// the monitor has reported).
+    public func waitForFirstPath(timeoutMs: Int) async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            let once = OnceResume(cont)
+            lock.lock()
+            if path != nil {
+                lock.unlock()
+                once.resume()
+                return
+            }
+            pathWaiters.append(once)
+            lock.unlock()
+            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(max(timeoutMs, 0))) { once.resume() }
+        }
+    }
+
+    private static func unmetered(_ p: NWPath?) -> Bool {
+        guard let p, p.status == .satisfied, !p.isExpensive else { return false }
+        return p.usesInterfaceType(.wifi) || p.usesInterfaceType(.wiredEthernet)
     }
 
     @MainActor
@@ -61,15 +90,40 @@ public final class RunConditions: @unchecked Sendable {
         lock.unlock()
     }
 
+    private func releaseWaiters() {
+        lock.lock()
+        let waiters = pathWaiters
+        pathWaiters = []
+        lock.unlock()
+        waiters.forEach { $0.resume() }
+    }
+
     private func update(_ p: NWPath) {
         let signature = "\(p.status)|\(p.availableInterfaces.map(\.name).joined(separator: ","))|\(p.isExpensive)"
         lock.lock()
         path = p
-        let changed = lastSignature != nil && lastSignature != signature
+        let changed = lastSignature != signature
         lastSignature = signature
         let callback = _onNetworkChange
         lock.unlock()
+        releaseWaiters()
         if changed { callback?() }
+    }
+}
+
+/// Resumes a continuation once, whoever comes first.
+private final class OnceResume: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cont: CheckedContinuation<Void, Never>?
+
+    init(_ cont: CheckedContinuation<Void, Never>) { self.cont = cont }
+
+    func resume() {
+        lock.lock()
+        let c = cont
+        cont = nil
+        lock.unlock()
+        c?.resume()
     }
 }
 #endif
