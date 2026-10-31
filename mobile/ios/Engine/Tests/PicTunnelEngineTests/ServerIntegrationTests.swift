@@ -203,7 +203,19 @@ final class ChaosUploader: BackgroundUploader, @unchecked Sendable {
 
     func setCompletionHandler(_ handler: @escaping @Sendable (UploadCompletion) async -> Void) {
         lock.lockSync(); self.handler = handler; lock.unlockSync()
-        inner.setCompletionHandler(handler)
+        inner.setCompletionHandler { [weak self] c in
+            self?.record(c)
+            await handler(c)
+        }
+    }
+
+    /// Completions the inner uploader delivered, for failure messages.
+    var completions: [String] { lock.lockSync(); defer { lock.unlockSync() }; return _completions }
+    private var _completions: [String] = []
+
+    private func record(_ c: UploadCompletion) {
+        let what = c.error.map { "\($0)" } ?? "\(c.status ?? -1) \(c.headers["Upload-Offset"] ?? "")"
+        lock.lockSync(); _completions.append("\(c.taskDescription): \(what)"); lock.unlockSync()
     }
 
     func pendingTaskDescriptions() async -> [String] {
@@ -497,7 +509,7 @@ final class ServerIntegrationTests: XCTestCase {
         XCTAssertEqual(relaunched.lines, [], "nothing re-sent for the running task")
         try await relaunched.release(desc)
         let done = try await waitUntil(timeout: 30) { try self.item("bg").state == .backedUp }
-        XCTAssertTrue(done, "\(relaunched.lines) \(String(describing: try? self.item("bg")))")
+        XCTAssertTrue(done, "\(relaunched.lines) completions: \(relaunched.completions) \(String(describing: try? self.item("bg")))")
         XCTAssertEqual(relaunched.lines.filter { $0.hasPrefix("PATCH") }.compactMap { $0.components(separatedBy: "@").last },
                        ["\(2 * mib)"])
         let assets = try server.assets(sha256: sha256Hex(b))
