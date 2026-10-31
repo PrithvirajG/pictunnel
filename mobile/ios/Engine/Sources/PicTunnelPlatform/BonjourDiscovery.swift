@@ -4,9 +4,20 @@ import Network
 
 /// mDNS discovery of `_pictunnel._tcp` for manual setup (M§4.4, P§6.4) with `NWBrowser`. Needs the
 /// `NSLocalNetworkUsageDescription` and `NSBonjourServices` Info.plist keys. Each service found is
-/// resolved to an address by opening (and at once closing) a TCP connection to it.
+/// resolved to an address by opening (and at once closing) a TCP connection to it. The resolve is
+/// forced to IPv4: a link-local IPv6 address (`fe80::`) loses its interface scope in a URL and
+/// cannot be reached through it, so such addresses are never returned.
 public enum BonjourDiscovery {
     public static let serviceType = "_pictunnel._tcp"
+
+    /// TCP over IPv4 only, for resolving a service to a usable address.
+    static func ipv4Parameters() -> NWParameters {
+        let params = NWParameters.tcp
+        if let ip = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
+            ip.version = .v4
+        }
+        return params
+    }
 
     /// The https URLs of the servers found within `timeoutMs`.
     public static func discover(timeoutMs: Int) async -> [String] {
@@ -29,6 +40,8 @@ public enum BonjourDiscovery {
         case let .ipv4(a):
             h = "\(a)"
         case let .ipv6(a):
+            // Link-local needs its scope, which a URL cannot carry usefully: unusable.
+            if a.isLinkLocal { return nil }
             let s = "\(a)"
             h = "[\(s.split(separator: "%").first.map(String.init) ?? s)]"
         case let .name(n, _):
@@ -56,7 +69,7 @@ private final class Resolver: @unchecked Sendable {
             lock.unlock()
             return
         }
-        let conn = NWConnection(to: endpoint, using: .tcp)
+        let conn = NWConnection(to: endpoint, using: BonjourDiscovery.ipv4Parameters())
         connections.append(conn)
         lock.unlock()
         conn.stateUpdateHandler = { [weak self, weak conn] state in
