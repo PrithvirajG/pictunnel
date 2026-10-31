@@ -139,7 +139,9 @@ class AndroidHostBackend(
         Scheduling.runNow(app, c)
     }
 
-    override suspend fun status(): BackupStatus = controller().status()
+    /** Before pairing (or after unpairing) an empty status, as on iOS: the UI asks at start-up. */
+    override suspend fun status(): BackupStatus =
+        services.session()?.controller?.status() ?: emptyStatus(MediaPermissions.access(app))
 
     override suspend fun settings(): EngineSettings = controller().getSettings()
 
@@ -221,6 +223,22 @@ class AndroidHostBackend(
 
     companion object {
         const val NOT_PAIRED = "not_paired"
+
+        fun emptyStatus(access: MediaAccess) =
+            BackupStatus(
+                backedUp = 0,
+                total = 0,
+                queued = 0,
+                uploading = null,
+                needsAttention = 0,
+                skipped = 0,
+                freeableBytes = 0,
+                paused = false,
+                pauseReason = null,
+                lastRunAtMs = null,
+                preparing = 0,
+                mediaAccess = access,
+            )
         const val LOGOUT_TIMEOUT_MS = 5_000L
         private const val DEFAULT_NAME = Account.DEFAULT_NAME
     }
