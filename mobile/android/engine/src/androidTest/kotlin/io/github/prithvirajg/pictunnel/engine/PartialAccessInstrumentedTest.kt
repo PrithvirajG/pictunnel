@@ -3,6 +3,7 @@ package io.github.prithvirajg.pictunnel.engine
 import android.content.Context
 import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
@@ -47,7 +48,9 @@ class PartialAccessInstrumentedTest {
 
             val granted = insertImage(context, "pt-granted-${System.nanoTime()}.jpg", sampleBytes(3))
             val path = "/sdcard/Pictures/pt-shell-${System.nanoTime()}.png"
-            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("screencap -p $path").close()
+            // Drain the output: the command has finished writing the file only once its pipe ends.
+            val pfd = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("screencap -p $path")
+            ParcelFileDescriptor.AutoCloseInputStream(pfd).use { it.readBytes() }
             val scanned = CompletableDeferred<Uri?>()
             MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf("image/png")) { _, uri -> scanned.complete(uri) }
             val shellUri = withTimeout(20_000) { scanned.await() }
