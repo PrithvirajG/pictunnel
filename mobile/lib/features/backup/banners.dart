@@ -5,6 +5,7 @@ import '../../app/router.dart' show serverConnectedProvider;
 import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
 import '../../core/engine/engine.dart';
+import '../../core/engine/error_copy.dart';
 import 'backup_providers.dart';
 
 /// Banner copy keyed by `PauseReason.name` (spec M§8). Adding a reason is one
@@ -78,13 +79,20 @@ class StatusBanner extends ConsumerWidget {
 
   final BannerSpec spec;
 
-  Future<void> _act(WidgetRef ref) async {
+  Future<void> _act(BuildContext context, WidgetRef ref) async {
     final engine = ref.read(engineProvider);
     switch (spec.action) {
       case BannerAction.resume:
         await engine.runNow();
       case BannerAction.allowFullAccess:
-        await ref.read(requestFullAccessProvider)();
+        final messenger = ScaffoldMessenger.maybeOf(context);
+        try {
+          await ref.read(requestFullAccessProvider)();
+        } catch (e) {
+          messenger?.showSnackBar(
+            SnackBar(content: Text(engineErrorMessage(e))),
+          );
+        }
       case BannerAction.pairAgain:
         await engine.unpair();
         ref.invalidate(serverConnectedProvider);
@@ -121,7 +129,7 @@ class StatusBanner extends ConsumerWidget {
                 minimumSize: const Size(48, 48),
                 foregroundColor: Tokens.accent,
               ),
-              onPressed: () => _act(ref),
+              onPressed: () => _act(context, ref),
               child: Text(
                 spec.actionLabel!,
                 style: bodyStyle(size: 14, weight: 700, color: Tokens.accent),

@@ -5,6 +5,7 @@ import io.github.prithvirajg.pictunnel.engine.core.AttentionItem
 import io.github.prithvirajg.pictunnel.engine.core.BackupStatus
 import io.github.prithvirajg.pictunnel.engine.core.EngineSettings
 import io.github.prithvirajg.pictunnel.engine.core.FreeUpResult
+import io.github.prithvirajg.pictunnel.engine.core.MediaAccess
 import io.github.prithvirajg.pictunnel.engine.core.PhoneItemPage
 import io.github.prithvirajg.pictunnel.engine.model.PauseReason
 import io.github.prithvirajg.pictunnel.engine.net.Endpoints
@@ -15,9 +16,13 @@ import io.github.prithvirajg.pictunnel.engine.pairing.TrustOnFirstUse
 import io.github.prithvirajg.pictunnel.engine.platform.Album
 import io.github.prithvirajg.pictunnel.engine.platform.GalleryWriter
 import io.github.prithvirajg.pictunnel.engine.platform.IntentSenderLauncher
+import io.github.prithvirajg.pictunnel.engine.platform.MediaAccessRequester
 import io.github.prithvirajg.pictunnel.engine.platform.MediaLibrary
+import io.github.prithvirajg.pictunnel.engine.platform.MediaPermissions
 import io.github.prithvirajg.pictunnel.engine.platform.MediaStoreDeleter
 import io.github.prithvirajg.pictunnel.engine.platform.NsdDiscovery
+import io.github.prithvirajg.pictunnel.engine.platform.PermissionDialog
+import io.github.prithvirajg.pictunnel.engine.platform.PermissionPrompt
 import io.github.prithvirajg.pictunnel.engine.sched.EngineRuntime
 import io.github.prithvirajg.pictunnel.engine.sched.Scheduling
 import io.github.prithvirajg.pictunnel.engine.store.ActivityEntity
@@ -31,11 +36,14 @@ import java.util.concurrent.atomic.AtomicReference
  * The real [HostBackend]: the paired [EngineServices.Session]'s controller,
  * [Scheduling] and [EngineRuntime] for runs, and the platform adapters.
  * [launcher] is the current activity's delete-request launcher (free up
- * space needs the OS dialog), null while no activity is attached.
+ * space needs the OS dialog), null while no activity is attached;
+ * [permissions] likewise for the runtime permission dialog ("Allow full
+ * access").
  */
 class AndroidHostBackend(
     context: Context,
     private val services: EngineServices = EngineServices.get(context),
+    private val permissions: () -> PermissionPrompt? = { PermissionDialog.takeIf { it.attached } },
     private val launcher: () -> IntentSenderLauncher?,
 ) : HostBackend {
     private val app = context.applicationContext
@@ -108,6 +116,7 @@ class AndroidHostBackend(
             activeEndpoint = active.toString().trimEnd('/'),
             onLan = Endpoints.isLan(active.host),
             fp16 = s.credentials.pinSpki.take(16),
+            fpFull = s.credentials.pinSpki,
         )
     }
 
@@ -186,6 +195,28 @@ class AndroidHostBackend(
             NsdDiscovery(app).discover().collect { servers -> latest.set(servers.map { it.url }.distinct()) }
         }
         return latest.get()
+    }
+
+    /**
+     * "Allow full access": asks (or opens the app's settings), then publishes
+     * the new `mediaAccess` and, when more became readable, schedules a scan
+     * and sync so the newly granted items are backed up.
+     */
+    override suspend fun requestMediaAccess(): MediaAccess {
+        val before = MediaPermissions.access(app)
+        val prompt = permissions() ?: throw HostException("no_activity", "Open PicTunnel to allow access")
+        val after =
+            MediaAccessRequester(
+                access = { MediaPermissions.access(app) },
+                prompt = prompt,
+                canAskAgain = PermissionDialog::canAskAgain,
+                openSettings = { PermissionDialog.openAppSettings(app) },
+            ).request() ?: throw HostException("no_activity", "Open PicTunnel to allow access")
+        services.session()?.controller?.let { c ->
+            c.onMediaAccessChanged()
+            if (after != before && after != MediaAccess.None) Scheduling.requestSync(app, c)
+        }
+        return after
     }
 
     companion object {

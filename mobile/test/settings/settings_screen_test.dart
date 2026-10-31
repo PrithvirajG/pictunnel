@@ -26,6 +26,7 @@ FakeEngine settingsEngine({int freeable = 0, int queued = 0}) {
       activeEndpoint: 'https://192.168.1.20:8443',
       onLan: true,
       fp16: 'AB12CD34EF56GH78',
+      fpFull: 'AB12CD34EF56GH78IJ90KL12MN34OP56QR78ST90UV12',
     ),
   );
   e.status = BackupStatus(

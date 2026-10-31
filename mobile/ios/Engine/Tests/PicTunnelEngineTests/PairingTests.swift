@@ -160,7 +160,7 @@ final class PairingTests: XCTestCase {
         XCTAssertTrue(rt.isPaired)
         let conn = try XCTUnwrap(rt.connection())
         XCTAssertEqual(conn, RuntimeConnection(serverId: sid, name: "Home server", activeEndpoint: "https://192.168.1.20:8443",
-                                               onLan: true, fp16: String(fp.prefix(16))))
+                                               onLan: true, fp16: String(fp.prefix(16)), fpFull: fp))
         let token = try await rt.accessToken()
         XCTAssertEqual(token, "pt_at_1")
 

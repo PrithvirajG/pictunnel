@@ -77,7 +77,7 @@ class EngineHost(
 
     override fun serverInfo(callback: (Result<ServerConnection?>) -> Unit) =
         call(callback) {
-            backend.connection()?.let { ServerConnection(it.serverId, it.name, it.activeEndpoint, it.onLan, it.fp16) }
+            backend.connection()?.let { ServerConnection(it.serverId, it.name, it.activeEndpoint, it.onLan, it.fp16, it.fpFull) }
         }
 
     override fun start(callback: (Result<Unit>) -> Unit) = call(callback) { backend.start() }
@@ -149,6 +149,9 @@ class EngineHost(
         timeoutMs: Long,
         callback: (Result<List<String>>) -> Unit,
     ) = call(callback) { backend.discover(timeoutMs.coerceIn(0, MAX_DISCOVERY_MS)) }
+
+    override fun requestMediaAccess(callback: (Result<MediaAccess>) -> Unit) =
+        call(callback) { backend.requestMediaAccess().toPigeon() }
 
     companion object {
         private val MAIN by lazy { Handler(Looper.getMainLooper()) }

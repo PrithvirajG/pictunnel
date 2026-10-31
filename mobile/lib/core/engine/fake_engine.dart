@@ -64,6 +64,7 @@ class FakeEngine implements Engine {
       activeEndpoint: req.serverUrl ?? identity.url,
       onLan: true,
       fp16: identity.fp16,
+      fpFull: identity.fpFull,
     );
     return PairResult(
       serverId: identity.serverId,
@@ -205,5 +206,15 @@ class FakeEngine implements Engine {
   ) async {
     saveCalls.add(assetId);
     return 'saved-$assetId';
+  }
+
+  /// What [requestMediaAccess] returns.
+  MediaAccess grantOnRequest = MediaAccess.full;
+  var mediaAccessRequests = 0;
+
+  @override
+  Future<MediaAccess> requestMediaAccess() async {
+    mediaAccessRequests++;
+    return grantOnRequest;
   }
 }

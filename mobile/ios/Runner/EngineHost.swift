@@ -1,5 +1,6 @@
 import Flutter
 import Foundation
+import Photos
 import PicTunnelEngine
 import PicTunnelPlatform
 import UIKit
@@ -315,5 +316,35 @@ final class EngineHost: NSObject, EngineHostApi {
 
     func discoverServers(timeoutMs: Int64, completion: @escaping (Result<[String], Error>) -> Void) {
         respond(completion) { await BonjourDiscovery.discover(timeoutMs: Int(timeoutMs)) }
+    }
+
+    // MARK: - media access
+
+    /// "Allow full access": asks for read/write access when it was never asked; with limited or
+    /// denied access (only Settings can grant full access then) opens the app's Settings page.
+    /// Then pushes a fresh status (its `mediaAccess` is read at delivery) and, when more became
+    /// readable, starts a run so the newly allowed photos are backed up.
+    func requestMediaAccess(completion: @escaping (Result<MediaAccess, Error>) -> Void) {
+        respond(completion) { [weak self] in
+            let before = PhotoKitLibrary.access()
+            switch before {
+            case .full:
+                break
+            case .notDetermined:
+                _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+            case .limited, .denied:
+                await MainActor.run {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+            }
+            let after = PhotoKitLibrary.access()
+            if let self, let c = self.runtime?.controller() {
+                self.relay.status(await c.status())
+                if after != before, after == .full || after == .limited { self.runtime.runNow() }
+            }
+            return PigeonMapping.mediaAccess(after)
+        }
     }
 }

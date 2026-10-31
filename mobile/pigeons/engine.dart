@@ -93,12 +93,16 @@ class ServerConnection {
     required this.activeEndpoint,
     required this.onLan,
     required this.fp16,
+    required this.fpFull,
   });
   String serverId;
   String name;
   String activeEndpoint;
   bool onLan;
   String fp16;
+
+  /// The full pinned SPKI SHA-256 (unpadded base64url), as the engines pin it.
+  String fpFull;
 }
 
 class UploadProgress {
@@ -299,6 +303,12 @@ abstract class EngineHostApi {
   void undoSkip(String sha256);
   @async
   String saveToGallery(String assetId, String filename, String mime);
+
+  /// Asks the OS for full photo library access (the "Allow full access"
+  /// banner). Opens the app's settings when the user can no longer be asked,
+  /// and returns the access the engine reports afterwards.
+  @async
+  MediaAccess requestMediaAccess();
 
   /// mDNS discovery; returns https URLs.
   @async

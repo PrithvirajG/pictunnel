@@ -33,6 +33,7 @@ ServerConnection paired() => ServerConnection(
       activeEndpoint: 'https://x',
       onLan: true,
       fp16: 'f',
+      fpFull: 'f',
     );
 
 Future<Harness> pump(WidgetTester t, {FakeEngine? engine}) async {

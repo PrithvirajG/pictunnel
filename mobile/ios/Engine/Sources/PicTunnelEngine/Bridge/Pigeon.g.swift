@@ -385,6 +385,8 @@ struct ServerConnection: Hashable, CustomStringConvertible {
   var activeEndpoint: String
   var onLan: Bool
   var fp16: String
+  /// The full pinned SPKI SHA-256 (unpadded base64url), as the engines pin it.
+  var fpFull: String
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -394,13 +396,15 @@ struct ServerConnection: Hashable, CustomStringConvertible {
     let activeEndpoint = pigeonVar_list[2] as! String
     let onLan = pigeonVar_list[3] as! Bool
     let fp16 = pigeonVar_list[4] as! String
+    let fpFull = pigeonVar_list[5] as! String
 
     return ServerConnection(
       serverId: serverId,
       name: name,
       activeEndpoint: activeEndpoint,
       onLan: onLan,
-      fp16: fp16
+      fp16: fp16,
+      fpFull: fpFull
     )
   }
   func toList() -> [Any?] {
@@ -410,13 +414,14 @@ struct ServerConnection: Hashable, CustomStringConvertible {
       activeEndpoint,
       onLan,
       fp16,
+      fpFull,
     ]
   }
   static func == (lhs: ServerConnection, rhs: ServerConnection) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return PigeonPigeonInternal.deepEquals(lhs.serverId, rhs.serverId) && PigeonPigeonInternal.deepEquals(lhs.name, rhs.name) && PigeonPigeonInternal.deepEquals(lhs.activeEndpoint, rhs.activeEndpoint) && PigeonPigeonInternal.deepEquals(lhs.onLan, rhs.onLan) && PigeonPigeonInternal.deepEquals(lhs.fp16, rhs.fp16)
+    return PigeonPigeonInternal.deepEquals(lhs.serverId, rhs.serverId) && PigeonPigeonInternal.deepEquals(lhs.name, rhs.name) && PigeonPigeonInternal.deepEquals(lhs.activeEndpoint, rhs.activeEndpoint) && PigeonPigeonInternal.deepEquals(lhs.onLan, rhs.onLan) && PigeonPigeonInternal.deepEquals(lhs.fp16, rhs.fp16) && PigeonPigeonInternal.deepEquals(lhs.fpFull, rhs.fpFull)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -426,10 +431,11 @@ struct ServerConnection: Hashable, CustomStringConvertible {
     PigeonPigeonInternal.deepHash(value: activeEndpoint, hasher: &hasher)
     PigeonPigeonInternal.deepHash(value: onLan, hasher: &hasher)
     PigeonPigeonInternal.deepHash(value: fp16, hasher: &hasher)
+    PigeonPigeonInternal.deepHash(value: fpFull, hasher: &hasher)
   }
 
   public var description: String {
-    return "ServerConnection(serverId: \(String(describing: serverId)), name: \(String(describing: name)), activeEndpoint: \(String(describing: activeEndpoint)), onLan: \(String(describing: onLan)), fp16: \(String(describing: fp16)))"
+    return "ServerConnection(serverId: \(String(describing: serverId)), name: \(String(describing: name)), activeEndpoint: \(String(describing: activeEndpoint)), onLan: \(String(describing: onLan)), fp16: \(String(describing: fp16)), fpFull: \(String(describing: fpFull)))"
   }
 }
 
@@ -1204,6 +1210,10 @@ protocol EngineHostApi {
   func freeUpSpace(localIds: [String]?, completion: @escaping (Result<FreeUpResult, Error>) -> Void)
   func undoSkip(sha256: String, completion: @escaping (Result<Void, Error>) -> Void)
   func saveToGallery(assetId: String, filename: String, mime: String, completion: @escaping (Result<String, Error>) -> Void)
+  /// Asks the OS for full photo library access (the "Allow full access"
+  /// banner). Opens the app's settings when the user can no longer be asked,
+  /// and returns the access the engine reports afterwards.
+  func requestMediaAccess(completion: @escaping (Result<MediaAccess, Error>) -> Void)
   /// mDNS discovery; returns https URLs.
   func discoverServers(timeoutMs: Int64, completion: @escaping (Result<[String], Error>) -> Void)
 }
@@ -1538,6 +1548,24 @@ class EngineHostApiSetup {
       }
     } else {
       saveToGalleryChannel.setMessageHandler(nil)
+    }
+    /// Asks the OS for full photo library access (the "Allow full access"
+    /// banner). Opens the app's settings when the user can no longer be asked,
+    /// and returns the access the engine reports afterwards.
+    let requestMediaAccessChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.pictunnel.EngineHostApi.requestMediaAccess\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      requestMediaAccessChannel.setMessageHandler { _, reply in
+        api.requestMediaAccess { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      requestMediaAccessChannel.setMessageHandler(nil)
     }
     /// mDNS discovery; returns https URLs.
     let discoverServersChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.pictunnel.EngineHostApi.discoverServers\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)

@@ -61,6 +61,7 @@ FakeEngine engineWith(BackupStatus s) {
       activeEndpoint: 'https://x',
       onLan: true,
       fp16: 'AB',
+      fpFull: 'AB',
     ),
   );
   e.status = s;
@@ -298,7 +299,10 @@ void main() {
           overrides: [
             engineProvider.overrideWithValue(e),
             mediaAccessProvider.overrideWithValue(MediaAccess.partial),
-            requestFullAccessProvider.overrideWithValue(() async => asked++),
+            requestFullAccessProvider.overrideWithValue(() async {
+              asked++;
+              return MediaAccess.full;
+            }),
           ],
           child: MaterialApp(
             theme: darkroomTheme(),

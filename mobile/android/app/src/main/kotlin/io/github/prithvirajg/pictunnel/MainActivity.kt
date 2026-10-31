@@ -9,12 +9,15 @@ import io.github.prithvirajg.pictunnel.engine.bridge.EngineHost
 import io.github.prithvirajg.pictunnel.engine.bridge.EngineHostApi
 import io.github.prithvirajg.pictunnel.engine.bridge.EngineServices
 import io.github.prithvirajg.pictunnel.engine.platform.DeleteDialog
+import io.github.prithvirajg.pictunnel.engine.platform.PermissionDialog
 
 /**
  * Hosts the Flutter UI and registers the engine bridge (M§3). A
  * [FlutterFragmentActivity] so it has an activity-result registry: free up
  * space shows the system delete dialog through [DeleteDialog], registered in
- * [onCreate] so a dialog result survives activity recreation.
+ * [onCreate] so a dialog result survives activity recreation; the
+ * "Allow full access" permission request uses [PermissionDialog], registered
+ * the same way.
  */
 class MainActivity : FlutterFragmentActivity() {
     private var host: EngineHost? = null
@@ -22,6 +25,7 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DeleteDialog.register(this)
+        PermissionDialog.register(this)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

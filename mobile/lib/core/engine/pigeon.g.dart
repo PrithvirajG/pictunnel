@@ -334,6 +334,7 @@ class ServerConnection {
     required this.activeEndpoint,
     required this.onLan,
     required this.fp16,
+    required this.fpFull,
   });
 
   String serverId;
@@ -346,6 +347,9 @@ class ServerConnection {
 
   String fp16;
 
+  /// The full pinned SPKI SHA-256 (unpadded base64url), as the engines pin it.
+  String fpFull;
+
   List<Object?> _toList() {
     return <Object?>[
       serverId,
@@ -353,6 +357,7 @@ class ServerConnection {
       activeEndpoint,
       onLan,
       fp16,
+      fpFull,
     ];
   }
 
@@ -367,6 +372,7 @@ class ServerConnection {
       activeEndpoint: result[2]! as String,
       onLan: result[3]! as bool,
       fp16: result[4]! as String,
+      fpFull: result[5]! as String,
     );
   }
 
@@ -379,7 +385,7 @@ class ServerConnection {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(serverId, other.serverId) && _deepEquals(name, other.name) && _deepEquals(activeEndpoint, other.activeEndpoint) && _deepEquals(onLan, other.onLan) && _deepEquals(fp16, other.fp16);
+    return _deepEquals(serverId, other.serverId) && _deepEquals(name, other.name) && _deepEquals(activeEndpoint, other.activeEndpoint) && _deepEquals(onLan, other.onLan) && _deepEquals(fp16, other.fp16) && _deepEquals(fpFull, other.fpFull);
   }
 
   @override
@@ -388,7 +394,7 @@ class ServerConnection {
 
   @override
   String toString() {
-    return 'ServerConnection(serverId: $serverId, name: $name, activeEndpoint: $activeEndpoint, onLan: $onLan, fp16: $fp16)';
+    return 'ServerConnection(serverId: $serverId, name: $name, activeEndpoint: $activeEndpoint, onLan: $onLan, fp16: $fp16, fpFull: $fpFull)';
   }
 }
 
@@ -1616,6 +1622,28 @@ class EngineHostApi {
     )
     ;
     return pigeonVar_replyValue! as String;
+  }
+
+  /// Asks the OS for full photo library access (the "Allow full access"
+  /// banner). Opens the app's settings when the user can no longer be asked,
+  /// and returns the access the engine reports afterwards.
+  Future<MediaAccess> requestMediaAccess() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.pictunnel.EngineHostApi.requestMediaAccess$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+
+    final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
+    return pigeonVar_replyValue! as MediaAccess;
   }
 
   /// mDNS discovery; returns https URLs.

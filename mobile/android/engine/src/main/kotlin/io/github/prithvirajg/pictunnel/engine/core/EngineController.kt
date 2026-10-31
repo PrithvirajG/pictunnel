@@ -149,6 +149,9 @@ class EngineController(
 
     suspend fun status(): BackupStatus = reporter.snapshot()
 
+    /** The OS changed what the app may read (a permission request answered): publish the new `mediaAccess`. */
+    suspend fun onMediaAccessChanged() = reporter.publish(force = true)
+
     /** Pauses every run until [start]. */
     override suspend fun pause(reason: PauseReason) {
         settings.setPause(PauseState(reason, null))

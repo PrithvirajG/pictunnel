@@ -139,7 +139,10 @@ class FakeBackend : HostBackend {
 
     override suspend fun accessToken() = "token".also { hit("accessToken") }
 
-    override suspend fun connection() = Connection("srv", "Home", "https://192.168.1.20:8443", true, "AB12CD34EF56GH78").also { hit("connection") }
+    override suspend fun connection() =
+        Connection("srv", "Home", "https://192.168.1.20:8443", true, "AB12CD34EF56GH78", "AB12CD34EF56GH78restOfFingerprint").also {
+            hit("connection")
+        }
 
     override suspend fun start() = hit("start")
 
@@ -194,6 +197,8 @@ class FakeBackend : HostBackend {
     ) = "external_primary:image:99".also { hit("saveToGallery:$assetId:$filename:$mime") }
 
     override suspend fun discover(timeoutMs: Long) = listOf("https://192.168.1.20:8443").also { hit("discover:$timeoutMs") }
+
+    override suspend fun requestMediaAccess() = CoreAccess.Partial.also { hit("requestMediaAccess") }
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -239,7 +244,10 @@ class EngineHostTest {
 
         assertNull(ok("unpair"))
         assertEquals("token", ok("getAccessToken"))
-        assertEquals(ServerConnection("srv", "Home", "https://192.168.1.20:8443", true, "AB12CD34EF56GH78"), ok("serverInfo"))
+        assertEquals(
+            ServerConnection("srv", "Home", "https://192.168.1.20:8443", true, "AB12CD34EF56GH78", "AB12CD34EF56GH78restOfFingerprint"),
+            ok("serverInfo"),
+        )
         assertNull(ok("start"))
         assertNull(ok("pause", PauseReason.WIFI_REQUIRED))
         assertNull(ok("runNow"))
@@ -283,13 +291,14 @@ class EngineHostTest {
         assertNull(ok("undoSkip", "cd".repeat(32)))
         assertEquals("external_primary:image:99", ok("saveToGallery", "asset-1", "IMG.JPG", "image/jpeg"))
         assertEquals(listOf("https://192.168.1.20:8443"), ok("discoverServers", 3000L))
+        assertEquals(MediaAccess.PARTIAL, ok("requestMediaAccess"))
 
         assertEquals(
             listOf(
                 "pairQr:pictunnel://pair?x", "pairManual:https://h:8443:ABCD-EFGH-JK:pin", "tofu", "unpair", "accessToken",
                 "connection", "start", "pause:WifiRequired", "runNow", "status", "settings", "settings", "setSettings", "albums",
                 "phoneItems:5|a:50", "thumbnail:id:96", "attention", "retry:[a, b]", "activity:200", "freeUpSpace:null", "undoSkip",
-                "saveToGallery:asset-1:IMG.JPG:image/jpeg", "discover:3000",
+                "saveToGallery:asset-1:IMG.JPG:image/jpeg", "discover:3000", "requestMediaAccess",
             ),
             backend.calls,
         )
@@ -325,6 +334,8 @@ class EngineHostTest {
         assertEquals("not_found", err("phoneThumbnail", "id", 96L))
         backend.failWith = SecurityException("revoked")
         assertEquals("permission", err("phoneThumbnail", "id", 96L))
+        backend.failWith = HostException("no_activity")
+        assertEquals("no_activity", err("requestMediaAccess"))
         backend.failWith = IllegalStateException("bug")
         assertEquals("internal", err("listAlbums"))
         backend.undoOk = false

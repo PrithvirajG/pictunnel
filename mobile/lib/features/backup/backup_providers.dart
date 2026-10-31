@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
@@ -51,8 +52,30 @@ final mediaAccessProvider = Provider.autoDispose<MediaAccess>(
       MediaAccess.full,
 );
 
-/// Opens the OS flow for granting full access. Overridden by the platform
-/// layer; does nothing until then.
-final requestFullAccessProvider = Provider<Future<void> Function()>(
-  (_) => () async {},
-);
+/// "Allow full access": the engine runs the OS permission flow (Android's
+/// permission dialog, iOS's photo access prompt) or opens the app's settings
+/// page when only the user can change it there. The status is re-read right
+/// away, and again when the app comes back to the foreground (from Settings).
+final requestFullAccessProvider = Provider<Future<MediaAccess> Function()>((
+  ref,
+) {
+  AppLifecycleListener? onResume;
+  void refresh() => ref.invalidate(backupStatusProvider);
+  ref.onDispose(() => onResume?.dispose());
+  return () async {
+    final access = await ref.read(engineProvider).requestMediaAccess();
+    refresh();
+    onResume?.dispose();
+    onResume = null;
+    if (access != MediaAccess.full) {
+      onResume = AppLifecycleListener(
+        onResume: () {
+          onResume?.dispose();
+          onResume = null;
+          refresh();
+        },
+      );
+    }
+    return access;
+  };
+});

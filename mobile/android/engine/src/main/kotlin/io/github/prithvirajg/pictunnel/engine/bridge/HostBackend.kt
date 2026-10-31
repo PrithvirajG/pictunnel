@@ -4,6 +4,7 @@ import io.github.prithvirajg.pictunnel.engine.core.AttentionItem as CoreAttentio
 import io.github.prithvirajg.pictunnel.engine.core.BackupStatus as CoreStatus
 import io.github.prithvirajg.pictunnel.engine.core.EngineSettings as CoreSettings
 import io.github.prithvirajg.pictunnel.engine.core.FreeUpResult as CoreFreeUp
+import io.github.prithvirajg.pictunnel.engine.core.MediaAccess as CoreAccess
 import io.github.prithvirajg.pictunnel.engine.core.PhoneItemPage as CorePage
 import io.github.prithvirajg.pictunnel.engine.model.PauseReason as CorePause
 import io.github.prithvirajg.pictunnel.engine.pairing.PairResult as CorePairResult
@@ -24,6 +25,8 @@ data class Connection(
     val activeEndpoint: String,
     val onLan: Boolean,
     val fp16: String,
+    /** The full pinned SPKI SHA-256 (unpadded base64url); Flutter pins its browse client to it. */
+    val fpFull: String,
 )
 
 /**
@@ -106,4 +109,11 @@ interface HostBackend {
 
     /** Discovered servers' https URLs after [timeoutMs]. */
     suspend fun discover(timeoutMs: Long): List<String>
+
+    /**
+     * Asks for full photo library access ("Allow full access"), opening the
+     * app's settings when the user can no longer be asked; returns the access
+     * afterwards (the status the app sees is refreshed too).
+     */
+    suspend fun requestMediaAccess(): CoreAccess
 }

@@ -65,6 +65,10 @@ abstract interface class Engine {
   /// Downloads a server original into the phone gallery; returns its localId.
   Future<String> saveToGallery(String assetId, String filename, String mime);
 
+  /// "Allow full access": the OS permission flow (or the app's settings page
+  /// when the user can no longer be asked). Returns the access afterwards.
+  Future<MediaAccess> requestMediaAccess();
+
   /// Throttled by the engine to at most 4 per second.
   Stream<BackupStatus> get status$;
   Stream<PhoneItem> get items$;
@@ -150,6 +154,8 @@ class PigeonEngine implements Engine, EngineEventsApi {
   @override
   Future<String> saveToGallery(String assetId, String filename, String mime) =>
       _host.saveToGallery(assetId, filename, mime);
+  @override
+  Future<MediaAccess> requestMediaAccess() => _host.requestMediaAccess();
 
   void dispose() {
     EngineEventsApi.setUp(null);

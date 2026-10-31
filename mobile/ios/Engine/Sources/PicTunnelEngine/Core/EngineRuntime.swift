@@ -10,6 +10,8 @@ public struct RuntimeConnection: Equatable, Sendable {
     public var activeEndpoint: String
     public var onLan: Bool
     public var fp16: String
+    /// The full pinned SPKI SHA-256 (unpadded base64url); Flutter pins its browse client to it.
+    public var fpFull: String
 }
 
 /// Why a call that needs a paired engine failed.
@@ -187,7 +189,8 @@ public final class EngineRuntime: @unchecked Sendable {
         let active = s.client.endpoints.active
         let name = ((try? db.setting(Self.serverNameKey)) ?? nil) ?? "PicTunnel"
         return RuntimeConnection(serverId: s.creds.serverId, name: name, activeEndpoint: active.absoluteString,
-                                 onLan: Endpoints.isLan(active.host ?? ""), fp16: String(s.creds.pinSpki.prefix(16)))
+                                 onLan: Endpoints.isLan(active.host ?? ""), fp16: String(s.creds.pinSpki.prefix(16)),
+                                 fpFull: s.creds.pinSpki)
     }
 
     /// The JSON client of the current pairing (downloads for `saveToGallery`).

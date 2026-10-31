@@ -404,7 +404,9 @@ data class ServerConnection (
   val name: String,
   val activeEndpoint: String,
   val onLan: Boolean,
-  val fp16: String
+  val fp16: String,
+  /** The full pinned SPKI SHA-256 (unpadded base64url), as the engines pin it. */
+  val fpFull: String
 )
  {
   companion object {
@@ -414,7 +416,8 @@ data class ServerConnection (
       val activeEndpoint = pigeonVar_list[2] as String
       val onLan = pigeonVar_list[3] as Boolean
       val fp16 = pigeonVar_list[4] as String
-      return ServerConnection(serverId, name, activeEndpoint, onLan, fp16)
+      val fpFull = pigeonVar_list[5] as String
+      return ServerConnection(serverId, name, activeEndpoint, onLan, fp16, fpFull)
     }
   }
   fun toList(): List<Any?> {
@@ -424,6 +427,7 @@ data class ServerConnection (
       activeEndpoint,
       onLan,
       fp16,
+      fpFull,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -434,7 +438,7 @@ data class ServerConnection (
       return true
     }
     val other = other as ServerConnection
-    return PigeonPigeonUtils.deepEquals(this.serverId, other.serverId) && PigeonPigeonUtils.deepEquals(this.name, other.name) && PigeonPigeonUtils.deepEquals(this.activeEndpoint, other.activeEndpoint) && PigeonPigeonUtils.deepEquals(this.onLan, other.onLan) && PigeonPigeonUtils.deepEquals(this.fp16, other.fp16)
+    return PigeonPigeonUtils.deepEquals(this.serverId, other.serverId) && PigeonPigeonUtils.deepEquals(this.name, other.name) && PigeonPigeonUtils.deepEquals(this.activeEndpoint, other.activeEndpoint) && PigeonPigeonUtils.deepEquals(this.onLan, other.onLan) && PigeonPigeonUtils.deepEquals(this.fp16, other.fp16) && PigeonPigeonUtils.deepEquals(this.fpFull, other.fpFull)
   }
 
   override fun hashCode(): Int {
@@ -444,10 +448,11 @@ data class ServerConnection (
     result = 31 * result + PigeonPigeonUtils.deepHash(this.activeEndpoint)
     result = 31 * result + PigeonPigeonUtils.deepHash(this.onLan)
     result = 31 * result + PigeonPigeonUtils.deepHash(this.fp16)
+    result = 31 * result + PigeonPigeonUtils.deepHash(this.fpFull)
     return result
   }
   override fun toString(): String {
-    return "ServerConnection(serverId=$serverId, name=$name, activeEndpoint=$activeEndpoint, onLan=$onLan, fp16=$fp16)"
+    return "ServerConnection(serverId=$serverId, name=$name, activeEndpoint=$activeEndpoint, onLan=$onLan, fp16=$fp16, fpFull=$fpFull)"
   }
 }
 
@@ -1239,6 +1244,12 @@ interface EngineHostApi {
   fun freeUpSpace(localIds: List<String>?, callback: (Result<FreeUpResult>) -> Unit)
   fun undoSkip(sha256: String, callback: (Result<Unit>) -> Unit)
   fun saveToGallery(assetId: String, filename: String, mime: String, callback: (Result<String>) -> Unit)
+  /**
+   * Asks the OS for full photo library access (the "Allow full access"
+   * banner). Opens the app's settings when the user can no longer be asked,
+   * and returns the access the engine reports afterwards.
+   */
+  fun requestMediaAccess(callback: (Result<MediaAccess>) -> Unit)
   /** mDNS discovery; returns https URLs. */
   fun discoverServers(timeoutMs: Long, callback: (Result<List<String>>) -> Unit)
 
@@ -1616,6 +1627,24 @@ interface EngineHostApi {
             val filenameArg = args[1] as String
             val mimeArg = args[2] as String
             api.saveToGallery(assetIdArg, filenameArg, mimeArg) { result: Result<String> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(PigeonPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(PigeonPigeonUtils.wrapResult(data))
+              }
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.pictunnel.EngineHostApi.requestMediaAccess$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            api.requestMediaAccess{ result: Result<MediaAccess> ->
               val error = result.exceptionOrNull()
               if (error != null) {
                 reply.reply(PigeonPigeonUtils.wrapError(error))

@@ -146,7 +146,8 @@ enum PigeonMapping {
     }
 
     static func connection(_ c: RuntimeConnection) -> ServerConnection {
-        ServerConnection(serverId: c.serverId, name: c.name, activeEndpoint: c.activeEndpoint, onLan: c.onLan, fp16: c.fp16)
+        ServerConnection(serverId: c.serverId, name: c.name, activeEndpoint: c.activeEndpoint, onLan: c.onLan, fp16: c.fp16,
+                         fpFull: c.fpFull)
     }
 
     // MARK: errors
