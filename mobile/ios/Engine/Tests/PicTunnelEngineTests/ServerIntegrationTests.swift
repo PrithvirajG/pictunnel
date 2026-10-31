@@ -497,7 +497,7 @@ final class ServerIntegrationTests: XCTestCase {
         XCTAssertEqual(relaunched.lines, [], "nothing re-sent for the running task")
         try await relaunched.release(desc)
         let done = try await waitUntil(timeout: 30) { try self.item("bg").state == .backedUp }
-        XCTAssertTrue(done, "\(relaunched.lines)")
+        XCTAssertTrue(done, "\(relaunched.lines) \(String(describing: try? self.item("bg")))")
         XCTAssertEqual(relaunched.lines.filter { $0.hasPrefix("PATCH") }.compactMap { $0.components(separatedBy: "@").last },
                        ["\(2 * mib)"])
         let assets = try server.assets(sha256: sha256Hex(b))
