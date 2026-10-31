@@ -72,6 +72,11 @@
 		<string>io.github.prithvirajg.pictunnel.process</string>
 		<string>io.github.prithvirajg.pictunnel.continued.*</string>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_pictunnel._tcp</string>
