@@ -112,23 +112,35 @@ public final class EngineController: @unchecked Sendable {
                 return report(ctx)
             }
         }
-        do {
-            try await pipeline.scan(ctx)
-        } catch {
-            // Keep going with the index we have; the next scan tries again.
-            log.note(ActivityLog.error, "Scanning the library failed: \(error)")
-        }
-        reporter.publish()
-
+        // The budget covers the scan too: when it runs out (or the run is cancelled, e.g. a
+        // BGTask expiring) the scan is cancelled and the run winds down.
         let tracker = self.tracker
+        let pipeline = self.pipeline
+        let scanning = Task { try await pipeline.scan(ctx) }
         let watcher: Task<Void, Never>? = budget.maxDurationMs.map { ms in
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(max(ms, 0)) * 1_000_000)
                 if Task.isCancelled { return }
                 ctx.stop(.budget)
+                scanning.cancel()
                 await tracker.detachAll()
             }
         }
+        do {
+            try await withTaskCancellationHandler {
+                try await scanning.value
+            } onCancel: {
+                scanning.cancel()
+            }
+        } catch {
+            if Task.isCancelled { ctx.stop(.budget) }
+            // Keep going with the index we have; the next scan tries again.
+            if !ctx.stopped, !(error is CancellationError) {
+                log.note(ActivityLog.error, "Scanning the library failed: \(error)")
+            }
+        }
+        reporter.publish()
+
         let concurrency = settings.get().uploadConcurrency
         var exhausted = true
         for _ in 0..<config.maxPasses {

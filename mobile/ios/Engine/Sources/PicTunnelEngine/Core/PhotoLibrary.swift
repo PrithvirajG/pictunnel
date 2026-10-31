@@ -119,7 +119,11 @@ public protocol PhotoLibrary: Sendable {
     /// Changes since `token` (nil: a full scan). Applies the album selection and the include-videos
     /// setting, and reports `original` resources for edited assets (the engine drops them unless
     /// "also keep unedited originals" is on).
-    func scan(since token: Data?, settings: EngineSettings) async throws -> LibraryScan
+    ///
+    /// Returns nil, without reading the library, when only a full scan is possible (no token, an
+    /// expired one, limited access) and `allowFullRescan` is false. Throws `CancellationError`
+    /// promptly when the calling task is cancelled.
+    func scan(since token: Data?, settings: EngineSettings, allowFullRescan: Bool) async throws -> LibraryScan?
 
     /// The resource's current fingerprint, or nil when the asset or resource no longer exists.
     func fingerprint(assetLocalId: String, role: ResourceRole) async -> Fingerprint?

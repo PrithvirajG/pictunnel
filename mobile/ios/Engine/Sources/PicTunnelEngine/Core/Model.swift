@@ -36,10 +36,15 @@ public protocol Deleter: Sendable {
 public struct RunBudget: Equatable, Sendable {
     public var maxDurationMs: Int64?
     public var maxUploads: Int?
+    /// False for short runs (BGAppRefresh): a scan that would have to read the whole library (no
+    /// valid change token, limited access) is left to a processing or foreground run, so a 30 s
+    /// refresh never starts a full scan it cannot finish.
+    public var allowFullScan: Bool
 
-    public init(maxDurationMs: Int64? = nil, maxUploads: Int? = nil) {
+    public init(maxDurationMs: Int64? = nil, maxUploads: Int? = nil, allowFullScan: Bool = true) {
         self.maxDurationMs = maxDurationMs
         self.maxUploads = maxUploads
+        self.allowFullScan = allowFullScan
     }
 }
 

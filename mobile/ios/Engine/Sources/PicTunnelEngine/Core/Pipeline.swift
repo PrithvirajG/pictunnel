@@ -95,6 +95,9 @@ final class RunCtx: @unchecked Sendable {
 
     var counters: Counters { locked { Counters(state: $0) } }
 
+    /// Whether this run may scan the whole library (`RunBudget.allowFullScan`).
+    var allowFullScan: Bool { budget.allowFullScan }
+
     /// True (and the run stops) once the time budget is spent.
     func outOfTime() -> Bool {
         guard let max = budget.maxDurationMs else { return false }
@@ -283,7 +286,14 @@ final class Pipeline: @unchecked Sendable {
     func scan(_ ctx: RunCtx) async throws {
         let s = settings.get()
         let token = try db.scanToken(scope: Self.scanScope)
-        let r = try await library.scan(since: token, settings: s)
+        // Nil: only a full scan would do and this run may not start one; the token stays as it is.
+        guard let r = try await library.scan(since: token, settings: s, allowFullRescan: ctx.allowFullScan) else {
+            return
+        }
+        // Cancelled (or out of budget) after reading: nothing is written, the token stays, and the
+        // next scan reports the same changes again.
+        try Task.checkCancellation()
+        if ctx.stopped { return }
         let resources = r.changed.filter { res in
             if res.role == .original, !s.keepUneditedOriginals { return false }
             if res.role != .liveVideo, res.kind == .video, !s.includeVideos { return false }
@@ -347,7 +357,10 @@ final class Pipeline: @unchecked Sendable {
                 writes.append(next)
             }
         }
+        // Batches already written stay (the next scan finds them unchanged); the token is saved
+        // only once everything is applied, so a cancelled scan is repeated, never lost.
         for start in stride(from: 0, to: writes.count, by: 500) {
+            try Task.checkCancellation()
             try db.upsertAll(Array(writes[start..<min(start + 500, writes.count)]))
         }
 
@@ -364,6 +377,7 @@ final class Pipeline: @unchecked Sendable {
         }
         let goneList = Array(gone)
         for start in stride(from: 0, to: goneList.count, by: 500) {
+            try Task.checkCancellation()
             let batch = Array(goneList[start..<min(start + 500, goneList.count)])
             try db.delete(localIds: batch)
             batch.forEach(removeStaged)

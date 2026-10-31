@@ -45,8 +45,17 @@ public struct PhotoAlbum: Equatable, Sendable {
 public final class PhotoKitLibrary: PhotoLibrary, @unchecked Sendable {
     private let lock = NSLock()
     private var measured: [String: Int64] = [:]
+    private var _networkAccessAllowed: () -> Bool = { true }
 
     public init() {}
+
+    /// Whether PhotoKit may download from iCloud now (read per request). The app answers false on
+    /// a cellular or expensive path while "Wi-Fi only" is on, so neither an export nor a size
+    /// measurement ever pulls an iCloud original over cellular.
+    public var networkAccessAllowed: () -> Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _networkAccessAllowed }
+        set { lock.lock(); _networkAccessAllowed = newValue; lock.unlock() }
+    }
 
     // MARK: - access
 
@@ -69,21 +78,30 @@ public final class PhotoKitLibrary: PhotoLibrary, @unchecked Sendable {
 
     // MARK: - scan
 
-    public func scan(since token: Data?, settings: EngineSettings) async throws -> LibraryScan {
+    public func scan(since token: Data?, settings: EngineSettings, allowFullRescan: Bool) async throws -> LibraryScan? {
         let access = Self.access()
         guard access == .full || access == .limited else { throw PhotoLibraryError.accessDenied }
         let library = PHPhotoLibrary.shared()
         // Taken before reading, so a change made while scanning is reported again next time.
         let next = try? NSKeyedArchiver.archivedData(withRootObject: library.currentChangeToken, requiringSecureCoding: true)
         if access == .full, let token,
-           let old = try? NSKeyedUnarchiver.unarchivedObject(ofClass: PHPersistentChangeToken.self, from: token),
-           let inc = try? await incremental(since: old, settings: settings) {
-            return LibraryScan(changed: inc.changed, removedAssets: inc.removed, token: next, fullRescan: false)
+           let old = try? NSKeyedUnarchiver.unarchivedObject(ofClass: PHPersistentChangeToken.self, from: token) {
+            do {
+                let inc = try await incremental(since: old, settings: settings)
+                return LibraryScan(changed: inc.changed, removedAssets: inc.removed, token: next, fullRescan: false)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Expired token or a changed album scope: only a full scan will do.
+            }
         }
+        guard allowFullRescan else { return nil }
         var changed: [LibraryResource] = []
         for asset in scopedAssets(settings) {
-            changed += await resources(of: asset)
+            try Task.checkCancellation()
+            changed += await resources(of: asset, settings: settings)
         }
+        try Task.checkCancellation()
         return LibraryScan(changed: changed, removedAssets: [], token: next, fullRescan: true)
     }
 
@@ -116,12 +134,13 @@ public final class PhotoKitLibrary: PhotoLibrary, @unchecked Sendable {
         var assets: [PHAsset] = []
         fetched.enumerateObjects { a, _, _ in assets.append(a) }
         for a in assets {
+            try Task.checkCancellation()
             seen.insert(a.localIdentifier)
             if let inScope, !inScope.contains(a.localIdentifier) {
                 removed.insert(a.localIdentifier)
                 continue
             }
-            changed += await resources(of: a)
+            changed += await resources(of: a, settings: settings)
         }
         // Changed assets that are no longer in scope (hidden, or a video with videos excluded).
         removed.formUnion(touched.subtracting(seen))
@@ -158,12 +177,14 @@ public final class PhotoKitLibrary: PhotoLibrary, @unchecked Sendable {
         return out
     }
 
-    private func resources(of asset: PHAsset) async -> [LibraryResource] {
+    private func resources(of asset: PHAsset, settings: EngineSettings) async -> [LibraryResource] {
         let media = Self.media(asset)
         let live = asset.mediaSubtypes.contains(.photoLive)
         let all = PHAssetResource.assetResources(for: asset).map(PHResource.init)
         var out: [LibraryResource] = []
         for (role, r) in ResourceSelection.select(all, media: media, isLivePhoto: live) {
+            // The engine drops unedited originals unless they are kept: never measure them.
+            if role == .original, !settings.keepUneditedOriginals { continue }
             guard let size = await size(of: r.resource, asset: asset, role: role) else { continue }
             out.append(LibraryResource(
                 assetLocalId: asset.localIdentifier, role: role, size: size,
@@ -191,7 +212,7 @@ public final class PhotoKitLibrary: PhotoLibrary, @unchecked Sendable {
         let handle = try FileHandle(forWritingTo: file)
         let sink = ExportSink(handle: handle)
         do {
-            try await Self.stream(r) { sink.write($0) }
+            try await Self.stream(r, network: networkAccessAllowed()) { sink.write($0) }
             try sink.finish()
         } catch {
             try? handle.close()
@@ -201,12 +222,12 @@ public final class PhotoKitLibrary: PhotoLibrary, @unchecked Sendable {
         return ExportedResource(file: file, size: sink.count, sha256: sink.hex)
     }
 
-    /// Streams a resource's bytes (downloading from iCloud when needed). Cancelling the calling
-    /// task cancels the request.
-    private static func stream(_ r: PHAssetResource, _ receive: @escaping (Data) -> Void) async throws {
+    /// Streams a resource's bytes, downloading from iCloud only when `network` allows it (else a
+    /// resource that is not on the phone fails). Cancelling the calling task cancels the request.
+    private static func stream(_ r: PHAssetResource, network: Bool, _ receive: @escaping (Data) -> Void) async throws {
         let manager = PHAssetResourceManager.default()
         let options = PHAssetResourceRequestOptions()
-        options.isNetworkAccessAllowed = true
+        options.isNetworkAccessAllowed = network
         let request = RequestBox()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
@@ -274,7 +295,9 @@ public final class PhotoKitLibrary: PhotoLibrary, @unchecked Sendable {
         return (asset, r.resource)
     }
 
-    /// The exact byte size of a resource.
+    /// The exact byte size of a resource. When PhotoKit does not report it, the bytes are counted
+    /// once, downloading from iCloud only when `networkAccessAllowed` says so (never over cellular
+    /// with "Wi-Fi only"); a resource that cannot be measured now is left for a later scan.
     private func size(of r: PHAssetResource, asset: PHAsset, role: ResourceRole) async -> Int64? {
         if let n = (r.value(forKey: "fileSize") as? NSNumber)?.int64Value, n >= 0 { return n }
         let key = "\(asset.localIdentifier)#\(role.rawValue)@\(Self.modifiedAtMs(asset))"
@@ -284,7 +307,7 @@ public final class PhotoKitLibrary: PhotoLibrary, @unchecked Sendable {
         if let known { return known }
         let counter = ByteCounter()
         do {
-            try await Self.stream(r) { counter.add($0.count) }
+            try await Self.stream(r, network: networkAccessAllowed()) { counter.add($0.count) }
         } catch {
             return nil
         }

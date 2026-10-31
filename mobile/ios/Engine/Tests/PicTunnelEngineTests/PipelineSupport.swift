@@ -157,8 +157,20 @@ final class FakeLibrary: PhotoLibrary, @unchecked Sendable {
     var exports: [String] { locked { _exports } }
     var scans: Int { locked { _scans } }
 
-    func scan(since token: Data?, settings: EngineSettings) async throws -> LibraryScan {
-        locked {
+    /// Runs at the start of every scan that reads the library (e.g. a slow, cancellable scan).
+    var beforeScan: @Sendable () async throws -> Void = {}
+    /// Scans refused because only a full scan would do and it was not allowed.
+    var deferredScans: Int { locked { _deferred } }
+    private var _deferred = 0
+
+    func scan(since token: Data?, settings: EngineSettings, allowFullRescan: Bool) async throws -> LibraryScan? {
+        if !allowFullRescan, token == nil {
+            locked { _deferred += 1 }
+            return nil
+        }
+        try await beforeScan()
+        try Task.checkCancellation()
+        return locked {
             _scans += 1
             // A token is the change sequence it was issued at; nil or unknown means a full rescan.
             let since = token.flatMap { Int64(String(decoding: $0, as: UTF8.self).dropFirst()) }
