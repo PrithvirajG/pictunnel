@@ -110,11 +110,16 @@ jobs:
           channel: stable
           flutter-version: ${{ steps.flutter.outputs.version }}
           cache: true
+      # Flutter keeps the Gradle wrapper scripts out of git and writes them on its first build;
+      # this job runs Gradle without a Flutter build, so it uses the wrapper's version directly.
+      - uses: gradle/actions/setup-gradle@v6.4.1
+        with:
+          gradle-version: "9.1.0"
       - uses: arduino/setup-task@v3.0.0
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - run: task test:engine:android TOOLS_MODE=native
+      - run: task test:engine:android TOOLS_MODE=native GRADLE_CMD=gradle
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7.0.2
@@ -195,14 +200,19 @@ jobs:
           swift --version
       - run: task test:engine:ios TOOLS_MODE=native
       - name: Swift EngineAPI tests
+        if: ${{ !cancelled() }}
         run: swift test --package-path mobile/ios/EngineAPI
       - id: flutter
+        if: ${{ !cancelled() }}
         run: echo "version=$(cat mobile/.flutter-version)" >> "$GITHUB_OUTPUT"
       - uses: subosito/flutter-action@v2.23.0
+        if: ${{ !cancelled() }}
         with:
           channel: stable
           flutter-version: ${{ steps.flutter.outputs.version }}
           cache: true
+      # Runs even when swift test failed, so one run reports both.
       - name: Build iOS without code signing
+        if: ${{ !cancelled() }}
         working-directory: mobile
         run: flutter pub get && flutter build ios --debug --no-codesign
