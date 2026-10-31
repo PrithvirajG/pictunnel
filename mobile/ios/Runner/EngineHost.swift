@@ -89,7 +89,7 @@ final class EngineHost: NSObject, EngineHostApi {
         }
 
         bgTasks = BGTasks(runtime: { [weak self] in self?.engine() },
-                          settings: { [weak self] in self?.currentSettings() ?? EngineSettings() })
+                          settings: { [weak self] in self?.currentSettings() ?? PicTunnelEngine.EngineSettings() })
         bgTasks.beforeRun = { await conditions.waitForFirstPath(timeoutMs: 2_000) }
         bgTasks.register()
         // Opens the database and installs the engine's completion handler, so completions
@@ -147,11 +147,11 @@ final class EngineHost: NSObject, EngineHostApi {
         return db
     }
 
-    private func currentSettings() -> EngineSettings {
+    private func currentSettings() -> PicTunnelEngine.EngineSettings {
         engineLock.lock()
         let db = self.db
         engineLock.unlock()
-        return db.map { SettingsRepo(db: $0).get() } ?? EngineSettings()
+        return db.map { SettingsRepo(db: $0).get() } ?? PicTunnelEngine.EngineSettings()
     }
 
     func attach(messenger: FlutterBinaryMessenger) {
