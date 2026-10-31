@@ -357,6 +357,34 @@ final class ServerIntegrationTests: XCTestCase {
 
     private func item(_ id: String) throws -> Item { try XCTUnwrap(try db.item(localId: id), id) }
 
+    #if canImport(Security)
+    /// The Task 12 carry, run on macOS: `EngineHTTP` attaches a `MetricsObserver` as each task's
+    /// delegate. Task-delegate methods it does not implement fall through to the session's
+    /// `PinningDelegate`, so over real TLS a changed pin must still be refused and reported unsent,
+    /// and the stored pin must still be accepted.
+    func testRejectsChangedPinWithMetricsDelegateOverRealTLS() async throws {
+        let server = try self.server
+        let url = try XCTUnwrap(URL(string: "https://127.0.0.1:\(server.httpsPort)/api/v1/server/info"))
+        let changed = String(repeating: "A", count: 43)
+
+        let bad = EngineHTTP(session: makeSession(pin: changed), clientHeader: clientHeaderValue)
+        XCTAssertTrue(bad.useTaskMetrics)
+        do {
+            _ = try await bad.send(URLRequest(url: url))
+            XCTFail("a changed certificate must be refused")
+        } catch let f as TransportFailure {
+            XCTAssertEqual(f.pinRejectedHost, "127.0.0.1")
+            XCTAssertEqual(f.sent, false)
+            XCTAssertTrue(f.provablyUnsent)
+            XCTAssertTrue(f.isTLS)
+        }
+
+        let good = EngineHTTP(session: makeSession(pin: server.pin), clientHeader: clientHeaderValue)
+        let (_, resp) = try await good.send(URLRequest(url: url))
+        XCTAssertEqual(resp.statusCode, 200)
+    }
+    #endif
+
     func testUploadsAndDedupes() async throws {
         let b = randomBytes(200_000, seed: 11)
         library.put("d1", b)
