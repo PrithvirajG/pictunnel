@@ -88,6 +88,7 @@ jobs:
       - run: task test:kotlin TOOLS_MODE=native
 
   # Android engine JVM tests (Robolectric, vectors) plus the real-server integration tests.
+  # Java 21: Robolectric's Android SDK 36 sandbox does not run on 17.
   engine-android-unit:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -96,7 +97,7 @@ jobs:
       - uses: actions/setup-java@v6.1.0
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
           cache: gradle
       - uses: actions/setup-go@v7.0.0
         with:
