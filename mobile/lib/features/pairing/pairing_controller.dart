@@ -8,10 +8,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/router.dart';
 import '../../core/engine/engine.dart';
+import '../../core/engine/error_copy.dart';
 import '../../core/pairing/pair_uri.dart';
 
-/// Device name sent to the server. Overridable (e.g. with the real model name).
+/// Device name sent to the server. The composition root overrides it with the
+/// phone's own name (device_info_plus); this default is only for tests.
 final deviceNameProvider = Provider<String>((_) => 'My phone');
+
+/// Runs after a successful pairing, before the app leaves the pair screen.
+/// The composition root uses it to remember the library owner and reset the
+/// local mirror when the server changed.
+final onPairedProvider = Provider<Future<void> Function(PairResult)>(
+  (_) => (_) async {},
+);
 
 /// A user-facing pairing failure.
 class PairFailure {
@@ -50,6 +59,17 @@ const _copy = <String, String>{
   'offline': "You're offline. Connect to a network and try again.",
   'rate_limited': 'Too many attempts. Wait a minute and try again.',
   'client_too_old': 'This version of PicTunnel is too old for your server. Update the app.',
+  'not_pictunnel':
+      "That address answered, but it isn't a PicTunnel server. Check the address on your computer.",
+  'invalid_url': "That doesn't look like a web address. Check it and try again.",
+  'server_id_mismatch':
+      'That server is not the one this code was made for. Show a new code on the right computer.',
+  'bad_response':
+      "Your server sent an answer PicTunnel didn't understand. Update PicTunnel on your computer and phone.",
+  'not_paired': 'This phone is not paired yet. Scan the code on your computer.',
+  'no_activity': 'Open PicTunnel and try again.',
+  'permission': 'PicTunnel needs permission for this. Allow it in Settings.',
+  'not_found': "Couldn't find that server. Check the address and try again.",
 };
 
 const _fallback = "Couldn't connect to your server. Try again.";
@@ -60,7 +80,7 @@ PairFailure failureFor(Object error) {
     PlatformException(:final code) => code,
     _ => 'unknown',
   };
-  return PairFailure(code, _copy[code] ?? _fallback);
+  return PairFailure(code, _copy[code] ?? engineCodeCopy(code) ?? _fallback);
 }
 
 /// First 16 characters in groups of four, e.g. `AB12 CD34 EF56 GH78`.
@@ -129,11 +149,12 @@ class QrPairingController extends Notifier<QrPairingState> {
     state = QrPairingState(phase: QrPhase.connecting, raw: raw, uri: uri);
     final engine = ref.read(engineProvider);
     try {
-      await engine.pair(PairRequest(
+      final result = await engine.pair(PairRequest(
         qrUri: raw,
         code: uri.code,
         deviceName: ref.read(deviceNameProvider),
       ));
+      await ref.read(onPairedProvider)(result);
       await engine.start();
       ref.invalidate(serverConnectedProvider);
     } catch (e) {
@@ -220,12 +241,13 @@ class ManualPairingController extends Notifier<ManualPairingState> {
         phase: ManualPhase.connecting, url: url, identity: id);
     final engine = ref.read(engineProvider);
     try {
-      await engine.pair(PairRequest(
+      final result = await engine.pair(PairRequest(
         serverUrl: url,
         code: code,
         deviceName: ref.read(deviceNameProvider),
         pinnedFp: id.fpFull,
       ));
+      await ref.read(onPairedProvider)(result);
       await engine.start();
       ref.invalidate(serverConnectedProvider);
     } catch (e) {

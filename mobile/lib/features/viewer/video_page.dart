@@ -28,9 +28,11 @@ Future<VideoPlayerController> openPlayback(
   String assetId,
 ) async {
   final source = ref.read(playbackSourceProvider);
+  // Headers first: resolving them also settles the endpoint the URL uses.
+  final headers = await source.headers();
   final controller = ref.read(videoControllerFactoryProvider)(
     source.playbackUrl(assetId),
-    await source.headers(),
+    headers,
   );
   await controller.initialize();
   return controller;
