@@ -124,8 +124,8 @@ public final class BackgroundSessionUploader: NSObject, BackgroundUploader, URLS
         guard let desc = task.taskDescription else { return }
         let http = task.response as? HTTPURLResponse
         var failure: Error?
-        if let host = pinning.takeRejection(taskIdentifier: id) {
-            failure = TransportFailure(code: .cancelled, sent: false, pinRejectedHost: host)
+        if let handshake = pinning.takeFailure(session: session, taskIdentifier: id) {
+            failure = TransportFailure(handshake: handshake, error: error ?? URLError(.cancelled), sent: false)
         } else if let error {
             failure = TransportFailure(code: (error as? URLError)?.code ?? .unknown, sent: wasSent)
         } else if http == nil {

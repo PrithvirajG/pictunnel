@@ -21,6 +21,20 @@ public struct TransportFailure: Error, Sendable {
         self.cancelled = cancelled
     }
 
+    /// A failed task, given what the pinning delegate recorded for its handshake: a pin rejection
+    /// (`tls`), an unreadable pin (unsent, classified `offline`: transient, never a rejection), or
+    /// the task's own error.
+    public init(handshake: HandshakeFailure?, error: Error, sent: Bool?, cancelled: Bool = false) {
+        switch handshake {
+        case let .pinRejected(host)?:
+            self.init(code: .cancelled, sent: false, pinRejectedHost: host, cancelled: cancelled)
+        case .pinUnavailable?:
+            self.init(code: .cannotConnectToHost, sent: false, cancelled: cancelled)
+        case nil:
+            self.init(code: (error as? URLError)?.code ?? .unknown, sent: sent, cancelled: cancelled)
+        }
+    }
+
     /// True when the request provably never reached the server: a pin rejection, metrics showing
     /// no request start, or (without metrics) an error that can only happen before sending.
     public var provablyUnsent: Bool {
@@ -92,14 +106,10 @@ public struct EngineHTTP: @unchecked Sendable {
                 let task = session.dataTask(with: req) { data, response, error in
                     if let error {
                         let id = box.taskIdentifier
-                        let pinHost = id.flatMap { pinning?.takeRejection(taskIdentifier: $0) }
-                        let code = (error as? URLError)?.code ?? .unknown
+                        let failure = id.flatMap { pinning?.takeFailure(session: session, taskIdentifier: $0) }
                         cont.resume(throwing: TransportFailure(
-                            code: code,
-                            sent: pinHost != nil ? false : (useMetrics ? observer.sent : nil),
-                            pinRejectedHost: pinHost,
-                            cancelled: box.isCancelled
-                        ))
+                            handshake: failure, error: error,
+                            sent: useMetrics ? observer.sent : nil, cancelled: box.isCancelled))
                     } else if let http = response as? HTTPURLResponse {
                         cont.resume(returning: (data ?? Data(), http))
                     } else {

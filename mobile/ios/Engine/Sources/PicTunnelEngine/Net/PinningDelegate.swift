@@ -131,10 +131,22 @@ public enum Pinning {
     }
 }
 
+/// Why the pinning delegate failed a task's handshake.
+public enum HandshakeFailure: Equatable, Sendable {
+    /// The certificate failed the pinning rule (P§6.3): a persistent one pauses backup as
+    /// "server certificate changed".
+    case pinRejected(host: String)
+    /// The stored pin could not be read (the Keychain is locked before the first unlock after a
+    /// reboot): transient, never a pin rejection. The task fails as unsent and offline.
+    case pinUnavailable
+}
+
 /// The session delegate that enforces `Pinning` on every TLS handshake of the engine's sessions
 /// (M§4.4). A refused certificate cancels the challenge, so the task fails before any request body
-/// is sent, and the refusal is recorded per task so `EngineHTTP` classifies it positively as a
-/// pin rejection rather than guessing from `URLError.cancelled`.
+/// is sent, and the refusal is recorded per session and task so `EngineHTTP` and the background
+/// uploader classify it positively rather than guessing from `URLError.cancelled`. Records are
+/// keyed by session and task id: task ids are only unique within one session, and the foreground
+/// and background sessions share this delegate.
 ///
 /// It implements the task-level challenge method only: URLSession then routes session-wide
 /// challenges (server trust) there too, with the task, which also works for background sessions.
@@ -142,18 +154,31 @@ public enum Pinning {
 /// On Linux (no `Security`), FoundationNetworking does not expose server trust, so the delegate
 /// leaves the default handling in place; the Linux engine build is for tests only.
 public final class PinningDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    private let pin: @Sendable () -> String?
+    private struct TaskKey: Hashable {
+        let session: ObjectIdentifier
+        let task: Int
+    }
+
+    /// What a handshake comes to.
+    enum Verdict: Equatable {
+        case accept
+        case reject
+        case unavailable
+    }
+
+    private let pin: @Sendable () throws -> String?
     private let lock = NSLock()
     private var _rejectedHosts: [String] = []
-    private var rejectedTasks: [Int: String] = [:]
+    private var failures: [TaskKey: HandshakeFailure] = [:]
 
-    /// `pin` is read on every handshake, so a re-pair takes effect without a new session.
-    public init(pin: @escaping @Sendable () -> String?) {
+    /// `pin` is read on every handshake, so a re-pair takes effect without a new session. A
+    /// throwing read fails the handshake as transient (`HandshakeFailure.pinUnavailable`).
+    public init(pin: @escaping @Sendable () throws -> String?) {
         self.pin = pin
     }
 
     public convenience init(store: CredentialStore) {
-        self.init { (try? store.load())?.pinSpki }
+        self.init { try store.load()?.pinSpki }
     }
 
     /// Hosts whose certificate was refused, oldest first.
@@ -163,18 +188,31 @@ public final class PinningDelegate: NSObject, URLSessionTaskDelegate, @unchecked
         return _rejectedHosts
     }
 
-    /// The host refused for this task, if any; the record is consumed.
-    public func takeRejection(taskIdentifier: Int) -> String? {
+    /// Why this task's handshake was failed, if it was; the record is consumed.
+    public func takeFailure(session: URLSession, taskIdentifier: Int) -> HandshakeFailure? {
         lock.lock()
         defer { lock.unlock() }
-        return rejectedTasks.removeValue(forKey: taskIdentifier)
+        return failures.removeValue(forKey: TaskKey(session: ObjectIdentifier(session), task: taskIdentifier))
     }
 
-    func recordRejection(taskIdentifier: Int, host: String) {
+    func record(_ failure: HandshakeFailure, session: URLSession, taskIdentifier: Int) {
         lock.lock()
         defer { lock.unlock() }
-        _rejectedHosts.append(host)
-        rejectedTasks[taskIdentifier] = host
+        if case let .pinRejected(host) = failure { _rejectedHosts.append(host) }
+        failures[TaskKey(session: ObjectIdentifier(session), task: taskIdentifier)] = failure
+    }
+
+    /// The decision for one handshake, given how the chain evaluates against a pin (nil: the
+    /// system's trust alone). A pin that cannot be read never counts as a rejection: a chain the
+    /// system trusts is still accepted, anything else is `unavailable`.
+    func verdict(evaluate: (String?) -> Bool) -> Verdict {
+        let stored: String?
+        do {
+            stored = try pin()
+        } catch {
+            return evaluate(nil) ? .accept : .unavailable
+        }
+        return evaluate(stored) ? .accept : .reject
     }
 
     #if canImport(Security)
@@ -185,10 +223,14 @@ public final class PinningDelegate: NSObject, URLSessionTaskDelegate, @unchecked
             completionHandler(.performDefaultHandling, nil)
             return
         }
-        if Pinning.evaluate(trust, host: space.host, pin: pin()) {
+        switch verdict(evaluate: { Pinning.evaluate(trust, host: space.host, pin: $0) }) {
+        case .accept:
             completionHandler(.useCredential, URLCredential(trust: trust))
-        } else {
-            recordRejection(taskIdentifier: task.taskIdentifier, host: space.host)
+        case .reject:
+            record(.pinRejected(host: space.host), session: session, taskIdentifier: task.taskIdentifier)
+            completionHandler(.cancelAuthenticationChallenge, nil)
+        case .unavailable:
+            record(.pinUnavailable, session: session, taskIdentifier: task.taskIdentifier)
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
     }
