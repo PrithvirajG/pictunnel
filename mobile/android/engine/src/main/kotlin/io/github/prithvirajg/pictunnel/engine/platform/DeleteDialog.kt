@@ -25,6 +25,12 @@ import kotlinx.coroutines.withContext
  * request that is still waiting here. When the activity is finishing the
  * request resolves as declined, so free up space never hangs; any other
  * destruction is followed by a recreation that delivers the answer.
+ *
+ * Accepted trade-off: if the Flutter engine is cleaned up with the activity,
+ * `EngineHost.close()` cancels the in-flight free-up call, so this request is
+ * cancelled rather than answered (free up space still never hangs). Nothing
+ * is lost: whatever the user did delete is gone from MediaStore, and the next
+ * scan drops it from the index as it does any phone deletion.
  */
 object DeleteDialog : IntentSenderLauncher {
     private val serial = Mutex()

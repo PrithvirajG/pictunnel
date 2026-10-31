@@ -24,13 +24,16 @@ import okhttp3.OkHttpClient
  * auth and [EngineController]) exists while the phone is paired and is rebuilt
  * after pairing, unpairing or a credential wipe.
  */
-class EngineServices private constructor(
+class EngineServices internal constructor(
     context: Context,
+    /** Tests pass an in-memory database and a fake store; the app opens the real ones. */
+    dbOverride: EngineDb? = null,
+    storeOverride: CredentialStore? = null,
 ) {
     private val app = context.applicationContext
 
-    val db: EngineDb by lazy { EngineDb.open(app) }
-    val store: CredentialStore by lazy { KeystoreCredentialStore.create(app) }
+    val db: EngineDb by lazy { dbOverride ?: EngineDb.open(app) }
+    val store: CredentialStore by lazy { storeOverride ?: KeystoreCredentialStore.create(app) }
     val settings: SettingsRepo by lazy { SettingsRepo(db.settings()) }
     val relay = EventsRelay(onNeedsRepair = ::drop)
     val account: Account by lazy { Account(db, settings, EngineRuntime.runs) }
@@ -52,12 +55,15 @@ class EngineServices private constructor(
         val controller: EngineController,
     )
 
-    @Volatile private var session: Session? = null
+    private val slot = SessionSlot(::build) { s, block -> s.auth.close(block) }
 
-    /** The paired session, built from the stored credentials; null while not paired. */
-    @Synchronized
-    fun session(): Session? {
-        session?.let { return it }
+    /**
+     * The paired session, built from the stored credentials; null while not
+     * paired, and while [endSession] is changing the credentials.
+     */
+    fun session(): Session? = slot.get()
+
+    private fun build(): Session? {
         val creds = store.load() ?: return null
         val endpoints = Endpoints(creds.endpoints)
         val http = EngineHttp.newClient(creds.pinSpki, clientHeader)
@@ -74,29 +80,19 @@ class EngineServices private constructor(
                 Clock.System,
                 relay,
             )
-        return Session(creds, endpoints, auth, client, controller).also { session = it }
+        return Session(creds, endpoints, auth, client, controller)
     }
 
     /**
-     * Ends the current session before credentials change: waits for its
-     * in-flight refresh, then runs [block] (the wipe or the new pairing's
-     * save) under the refresh lock, so a late refresh cannot overwrite it.
+     * Ends the current session before credentials change (unpair, pairing):
+     * waits for its in-flight refresh, then runs [block] (the wipe or the new
+     * pairing's save) under the refresh lock, so a late refresh cannot
+     * overwrite it. No session is built from the old credentials meanwhile.
      */
-    suspend fun <T> endSession(block: suspend () -> T): T {
-        val s =
-            synchronized(this) {
-                val current = session
-                session = null
-                current
-            }
-        return if (s != null) s.auth.close(block) else block()
-    }
+    suspend fun <T> endSession(block: suspend () -> T): T = slot.end(block)
 
     /** Forgets the session (credentials changed or wiped); the next [session] call rebuilds it. */
-    @Synchronized
-    fun drop() {
-        session = null
-    }
+    fun drop() = slot.drop()
 
     companion object {
         @Volatile private var instance: EngineServices? = null

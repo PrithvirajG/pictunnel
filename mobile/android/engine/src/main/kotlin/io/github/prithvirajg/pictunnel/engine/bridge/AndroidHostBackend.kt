@@ -22,6 +22,8 @@ import io.github.prithvirajg.pictunnel.engine.sched.EngineRuntime
 import io.github.prithvirajg.pictunnel.engine.sched.Scheduling
 import io.github.prithvirajg.pictunnel.engine.store.ActivityEntity
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicReference
 
@@ -60,11 +62,14 @@ class AndroidHostBackend(
     /**
      * Credentials are stored (the old session ended first): build the new
      * session and record the server; a different server starts a fresh index.
+     * Not cancellable (the Flutter engine going away must not leave half an
+     * index switch); the name lookup is bounded by the client's timeouts.
      */
-    private suspend fun afterPair(r: PairResult): Paired {
-        val s = session()
-        return Paired(r, services.account.adoptServer(r.serverId) { s.client.serverInfo().name })
-    }
+    private suspend fun afterPair(r: PairResult): Paired =
+        withContext(NonCancellable) {
+            val s = session()
+            Paired(r, services.account.adoptServer(r.serverId) { s.client.serverInfo().name })
+        }
 
     override suspend fun trustOnFirstUse(serverUrl: String): ServerFingerprint =
         TrustOnFirstUse(services.clientHeader, services.pairingHttp).probe(serverUrl)
@@ -74,9 +79,12 @@ class AndroidHostBackend(
      * ignored), no more background work, then the credentials are wiped under
      * the refresh lock (an in-flight refresh cannot restore them) and the
      * index, cursors, activity log and server identity are cleared. Cached
-     * hashes stay.
+     * hashes stay. Not cancellable, so it never stops halfway (the logout is
+     * bounded by its timeout).
      */
-    override suspend fun unpair() {
+    override suspend fun unpair() = withContext(NonCancellable) { unpairNow() }
+
+    private suspend fun unpairNow() {
         try {
             services.session()?.let { s -> withTimeoutOrNull(LOGOUT_TIMEOUT_MS) { s.client.logout() } }
         } catch (e: CancellationException) {
