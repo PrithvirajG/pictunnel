@@ -323,6 +323,22 @@ final class NetTests: XCTestCase {
         XCTAssertEqual(endpoints.active.host, "192.168.77.1")
     }
 
+    /// A follow-up chunk handed straight to the upload session (after a relaunch) must not go to an
+    /// unproven LAN endpoint: the active endpoint is settled first, and only once.
+    func testEnsureActiveReachedProbesAndFallsBackOnce() async throws {
+        StubServer.shared.install { r in
+            r.url.host == "192.168.77.1" ? .error(.cannotConnectToHost) : .json(200, "{}")
+        }
+        let endpoints = Endpoints(["https://192.168.77.1:8443", "https://photos.example.com"])
+        let http = stubHTTP()
+        try await endpoints.ensureActiveReached(http)
+        XCTAssertEqual(endpoints.active.host, "photos.example.com")
+        let count = StubServer.shared.requests.count
+        XCTAssertTrue(StubServer.shared.requests.contains { $0.path == Endpoints.probePath && $0.url.host == "photos.example.com" })
+        try await endpoints.ensureActiveReached(http)
+        XCTAssertEqual(StubServer.shared.requests.count, count, "a reached endpoint needs no new probe")
+    }
+
     func testReachableLanIsUsedDirectly() async throws {
         StubServer.shared.install { _ in .json(200, "{}") }
         let endpoints = Endpoints(["https://192.168.77.1:8443", "https://photos.example.com"])

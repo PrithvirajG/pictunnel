@@ -130,6 +130,22 @@ public final class Endpoints: @unchecked Sendable {
         return (error as? TransportFailure)?.cancelled == true
     }
 
+    /// Makes the active endpoint one that answered since it last failed, before a request that
+    /// bypasses `execute`: a follow-up chunk handed straight to the upload session, which has no
+    /// fallback. When the active endpoint is unproven, a `GET /healthz` goes through `execute`, so
+    /// a LAN endpoint gets its 3 s probe and an unreachable one falls back to the next. Throws when
+    /// none answers; the caller then leaves the item for the next run.
+    public func ensureActiveReached(_ http: EngineHTTP) async throws {
+        if activeIsReached() { return }
+        _ = try await execute(http, path: Self.probePath) { URLRequest(url: $0) }
+    }
+
+    private func activeIsReached() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return reached.contains(activeIndex)
+    }
+
     // MARK: - classification
 
     /// Private, link-local, loopback and mDNS/single-label hosts (RFC 1918, RFC 4193, RFC 3927).

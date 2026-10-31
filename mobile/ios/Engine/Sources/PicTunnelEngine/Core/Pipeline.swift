@@ -770,7 +770,11 @@ final class Pipeline: @unchecked Sendable {
         }
         let next = result.0
         guard result.1 == .go, next.state == .uploading, ctx.isFresh(next.localId),
-              let offset = next.uploadOffset, offset < next.size, let url = sessionURL(next) else { return }
+              let offset = next.uploadOffset, offset < next.size else { return }
+        // After a relaunch no request may have reached an endpoint yet, and the upload session does
+        // not fall back: settle on one that answers first (R9). If none does, the next run HEADs.
+        guard (try? await client.endpoints.ensureActiveReached(client.http)) != nil,
+              let url = sessionURL(next) else { return }
         await continueInBackground(ctx, next, url: url, offset: offset)
     }
 
