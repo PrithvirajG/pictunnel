@@ -3,56 +3,202 @@ on:
   workflow_dispatch:
   push:
     branches: [main, "feat/**"]
-    paths: ["mobile/**", "api/protocol/**", "Taskfile.yml", ".github/workflows/ci-mobile.yml"]
+    paths: ["mobile/**", "api/protocol/**", "Taskfile.yml", "tools/ci/android-instrumented.sh", ".github/workflows/ci-mobile.yml"]
   pull_request:
-    paths: ["mobile/**", "api/protocol/**", "Taskfile.yml", ".github/workflows/ci-mobile.yml"]
+    paths: ["mobile/**", "api/protocol/**", "Taskfile.yml", "tools/ci/android-instrumented.sh", ".github/workflows/ci-mobile.yml"]
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  flutter-android:
+  # flutter analyze, flutter test (unit, widget, vectors and goldens) and a debug APK.
+  flutter:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - id: flutter
-        run: echo "version=$(cat mobile/.flutter-version)" >> "$GITHUB_OUTPUT"
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ steps.flutter.outputs.version }}
-          cache: true
-      - uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - run: task test:mobile TOOLS_MODE=native
-      - name: Build Android debug APK
-        working-directory: mobile
-        run: flutter build apk --debug
-  engine-kotlin:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.1.0
         with:
           distribution: temurin
           java-version: 17
           cache: gradle
-      - uses: arduino/setup-task@v2
+      - id: flutter
+        run: echo "version=$(cat mobile/.flutter-version)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          cache: true
+      - uses: arduino/setup-task@v3.0.0
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task test:mobile TOOLS_MODE=native
+      - name: Upload golden failures
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: golden-failures
+          path: mobile/test/**/failures/
+          if-no-files-found: ignore
+      - name: Build Android debug APK
+        working-directory: mobile
+        run: flutter build apk --debug
+
+  # Regenerating the Pigeon bridge must reproduce the committed Dart, Kotlin and Swift.
+  pigeon-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - id: flutter
+        run: echo "version=$(cat mobile/.flutter-version)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          cache: true
+      - uses: arduino/setup-task@v3.0.0
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task gen:pigeon TOOLS_MODE=native
+      - name: Fail on drift
+        run: |
+          git status --porcelain -- mobile
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=all -- mobile/lib/core/engine mobile/android/engine/src/main/kotlin mobile/ios/Engine/Sources)"
+
+  # The generated Kotlin OpenAPI client and its vector tests.
+  engine-kotlin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - uses: arduino/setup-task@v3.0.0
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: task test:kotlin TOOLS_MODE=native
-  ios:
-    runs-on: macos-latest
+
+  # Android engine JVM tests (Robolectric, vectors) plus the real-server integration tests.
+  engine-android-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
       - id: flutter
         run: echo "version=$(cat mobile/.flutter-version)" >> "$GITHUB_OUTPUT"
-      - uses: subosito/flutter-action@v2
+      # The :engine module compiles against the Flutter embedding of this SDK.
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          cache: true
+      - uses: arduino/setup-task@v3.0.0
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task test:engine:android TOOLS_MODE=native
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: engine-android-unit-reports
+          path: mobile/android/engine/build/reports/tests/
+          if-no-files-found: ignore
+
+  # Instrumented tests on an API 34 emulator: scan, WorkManager, Keystore, the delete
+  # dialog, the partial-access run and a smoke launch of the app with the real bridge.
+  engine-android-instrumented:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - id: flutter
+        run: echo "version=$(cat mobile/.flutter-version)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          cache: true
+      # Build everything before the emulator boots, so the emulator step only installs and runs.
+      - name: Build the app and the engine test APK
+        working-directory: mobile
+        run: |
+          flutter pub get
+          flutter build apk --debug
+          (cd android && ./gradlew :engine:assembleDebugAndroidTest --no-daemon)
+      - name: Instrumented tests (API 34)
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash tools/ci/android-instrumented.sh
+      - name: Upload reports and logcat
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: engine-android-instrumented
+          path: |
+            mobile/android/engine/build/reports/androidTests/
+            mobile/android/engine/build/outputs/androidTest-results/
+            .cache/instrumented/
+          if-no-files-found: ignore
+
+  # The iOS engine on macOS (unit, vectors, real-server integration over pinned TLS), the
+  # generated Swift client, and the Runner app with every iOS adapter compiled.
+  engine-ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: arduino/setup-task@v3.0.0
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - run: task test:engine:ios TOOLS_MODE=native
+      - name: Swift EngineAPI tests
+        run: swift test --package-path mobile/ios/EngineAPI
+      - id: flutter
+        run: echo "version=$(cat mobile/.flutter-version)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
           flutter-version: ${{ steps.flutter.outputs.version }}
@@ -60,5 +206,3 @@ jobs:
       - name: Build iOS without code signing
         working-directory: mobile
         run: flutter pub get && flutter build ios --debug --no-codesign
-      - name: Swift EngineAPI tests
-        run: swift test --package-path mobile/ios/EngineAPI

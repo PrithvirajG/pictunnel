@@ -224,6 +224,20 @@ tasks:
       - >-
         {{if eq .TOOLS_MODE "native"}}cd mobile && flutter pub get && cd android && PICTUNNEL_BIN="{{.ROOT_DIR}}/.cache/pictunnel{{exeExt}}" {{.GRADLE_CMD}} :engine:testDebugUnitTest --no-daemon{{else}}{{.DOCKER_RUN}} -w /repo/mobile -e PICTUNNEL_BIN=/repo/.cache/pictunnel ghcr.io/cirruslabs/flutter:{{.FLUTTER_VERSION}} bash -c "flutter pub get && cd android && {{.GRADLE_CMD}} :engine:testDebugUnitTest --no-daemon"{{end}}
 
+  test:engine:android:instrumented:
+    desc: Android engine instrumented tests, the partial-access run and a bridge smoke launch (needs Flutter, the Android SDK and a booted API 34+ emulator or device on adb)
+    cmds:
+      - cd mobile && flutter pub get && flutter build apk --debug
+      - bash tools/ci/android-instrumented.sh
+
+  test:engine:ios:
+    desc: iOS engine tests plus the real-server integration tests (natively on macOS with pinned TLS; in Docker on Linux Swift over the loopback HTTP listener)
+    cmds:
+      - >-
+        {{if eq .TOOLS_MODE "native"}}cd server && CGO_ENABLED=0 go build -o ../.cache/pictunnel ./cmd/pictunnel{{else}}{{.DOCKER_RUN}} -w /repo/server -e CGO_ENABLED=0 -e GOOS=linux -e GOCACHE=/tmp/gocache -e GOMODCACHE=/tmp/gomod golang:1.27 go build -o /repo/.cache/pictunnel ./cmd/pictunnel{{end}}
+      - >-
+        {{if eq .TOOLS_MODE "native"}}PICTUNNEL_BIN="{{.ROOT_DIR}}/.cache/pictunnel" swift test --package-path mobile/ios/Engine{{else}}{{.DOCKER_RUN}} -e PICTUNNEL_BIN=/repo/.cache/pictunnel {{.SWIFT_IMAGE}} swift test -j 1 --package-path /repo/mobile/ios/Engine --scratch-path /repo/.cache/engine-ios-build{{end}}
+
   test:ml:
     desc: Lint and test the ML worker
     cmds:
