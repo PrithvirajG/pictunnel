@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
+import '../viewer/viewer_actions.dart' show ViewerActionException;
 import 'selection.dart';
 import 'tile.dart';
 import 'timeline_model.dart';
@@ -29,7 +30,16 @@ class SelectionBar extends ConsumerWidget {
       Future<void> Function(List<TimelineItem>) act,
       List<TimelineItem> eligible,
     ) async {
-      await act(eligible);
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      try {
+        await act(eligible);
+      } on ViewerActionException catch (e) {
+        messenger?.showSnackBar(SnackBar(content: Text(e.message)));
+      } catch (_) {
+        messenger?.showSnackBar(
+          const SnackBar(content: Text('Something went wrong. Try again.')),
+        );
+      }
       controller.exit();
     }
 

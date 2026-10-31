@@ -11,6 +11,7 @@ class PicTunnelApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp.router(
       title: 'PicTunnel',
+      debugShowCheckedModeBanner: false,
       theme: darkroomTheme(),
       darkTheme: darkroomTheme(),
       themeMode: ThemeMode.dark,

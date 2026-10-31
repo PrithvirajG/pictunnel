@@ -12,9 +12,11 @@ import 'pigeon.g.dart';
 export 'pigeon.g.dart'
     show
         ActivityEntry,
+        AlbumInfo,
         AttentionItem,
         BackupStatus,
         EngineSettings,
+        FreeUpResult,
         ItemState,
         MediaAccess,
         PageRequest,
@@ -25,6 +27,7 @@ export 'pigeon.g.dart'
         PhoneItemPage,
         ServerConnection,
         ServerIdentity,
+        SkippedFree,
         UploadProgress;
 
 /// What the Flutter side needs from a backup engine. Later tasks add the
@@ -48,6 +51,19 @@ abstract interface class Engine {
 
   /// "Back up again" for content deleted from the server (a tombstone).
   Future<void> undoSkip(String sha256);
+
+  /// A valid access token; the engine refreshes it first when it is close to
+  /// expiring (spec M§2: the engine owns token rotation).
+  Future<String> getAccessToken();
+  Future<void> setSettings(EngineSettings s);
+  Future<List<AlbumInfo>> listAlbums();
+
+  /// Deletes phone copies already safe on the server (P§7.8); null means all
+  /// eligible items. The OS confirmation dialog is always shown.
+  Future<FreeUpResult> freeUpSpace(List<String>? localIds);
+
+  /// Downloads a server original into the phone gallery; returns its localId.
+  Future<String> saveToGallery(String assetId, String filename, String mime);
 
   /// Throttled by the engine to at most 4 per second.
   Stream<BackupStatus> get status$;
@@ -122,6 +138,18 @@ class PigeonEngine implements Engine, EngineEventsApi {
       _host.listActivity(limit);
   @override
   Future<void> undoSkip(String sha256) => _host.undoSkip(sha256);
+  @override
+  Future<String> getAccessToken() => _host.getAccessToken();
+  @override
+  Future<void> setSettings(EngineSettings s) => _host.setSettings(s);
+  @override
+  Future<List<AlbumInfo>> listAlbums() => _host.listAlbums();
+  @override
+  Future<FreeUpResult> freeUpSpace(List<String>? localIds) =>
+      _host.freeUpSpace(localIds);
+  @override
+  Future<String> saveToGallery(String assetId, String filename, String mime) =>
+      _host.saveToGallery(assetId, filename, mime);
 
   void dispose() {
     EngineEventsApi.setUp(null);

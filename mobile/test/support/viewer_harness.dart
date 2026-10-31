@@ -14,7 +14,6 @@ import 'package:pictunnel/core/db/app_db.dart';
 import 'package:pictunnel/core/db/server_assets_dao.dart';
 import 'package:pictunnel/core/engine/engine.dart';
 import 'package:pictunnel/core/engine/fake_engine.dart';
-import 'package:pictunnel/core/engine/pigeon.g.dart' show FreeUpResult;
 import 'package:pictunnel/core/thumbs/thumb_image.dart';
 import 'package:pictunnel/features/timeline/timeline_model.dart';
 import 'package:pictunnel/features/timeline/timeline_providers.dart';

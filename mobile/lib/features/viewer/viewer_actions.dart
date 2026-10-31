@@ -1,12 +1,14 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pictunnel_api/pictunnel_api.dart' as api;
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/api/api_client.dart';
-import '../../core/engine/pigeon.g.dart' show EngineHostApi, FreeUpResult;
+import '../../core/engine/engine.dart';
+import '../../core/engine/error_copy.dart';
 import '../timeline/selection.dart';
 import '../timeline/timeline_model.dart';
 import '../timeline/timeline_providers.dart';
@@ -23,20 +25,23 @@ abstract interface class ViewerHost {
   Future<FreeUpResult> freeUpSpace(List<String>? localIds);
 }
 
-class PigeonViewerHost implements ViewerHost {
-  PigeonViewerHost([EngineHostApi? host]) : _host = host ?? EngineHostApi();
-  final EngineHostApi _host;
+/// [ViewerHost] backed by the app's [Engine].
+class EngineViewerHost implements ViewerHost {
+  EngineViewerHost(this._engine);
+  final Engine _engine;
 
   @override
   Future<String> saveToGallery(String assetId, String filename, String mime) =>
-      _host.saveToGallery(assetId, filename, mime);
+      _engine.saveToGallery(assetId, filename, mime);
 
   @override
   Future<FreeUpResult> freeUpSpace(List<String>? localIds) =>
-      _host.freeUpSpace(localIds);
+      _engine.freeUpSpace(localIds);
 }
 
-final viewerHostProvider = Provider<ViewerHost>((_) => PigeonViewerHost());
+final viewerHostProvider = Provider<ViewerHost>(
+  (ref) => EngineViewerHost(ref.watch(engineProvider)),
+);
 
 /// Where a video streams from: the authenticated playback URL (range
 /// streaming) and the `Authorization` header to send with it.
@@ -114,11 +119,20 @@ class ServerTimelineActions implements TimelineActions {
   ServerTimelineActions(this._ref);
   final Ref _ref;
 
+  /// Engine failures carry a code; turn them into copy the person can read.
+  Future<T> _engineCall<T>(Future<T> Function() call) async {
+    try {
+      return await call();
+    } on PlatformException catch (e) {
+      throw ViewerActionException(engineErrorMessage(e));
+    }
+  }
+
   @override
   Future<void> download(List<TimelineItem> items) async {
     final host = _ref.read(viewerHostProvider);
     for (final s in downloadable(items).map((i) => i.server!)) {
-      await host.saveToGallery(s.id, s.filename, s.mime);
+      await _engineCall(() => host.saveToGallery(s.id, s.filename, s.mime));
     }
   }
 
@@ -142,9 +156,16 @@ class ServerTimelineActions implements TimelineActions {
   Future<void> freeUp(List<TimelineItem> items) async {
     final ids = [for (final i in freeable(items)) i.phone!.localId];
     if (ids.isEmpty) return;
-    final r = await _ref.read(viewerHostProvider).freeUpSpace(ids);
+    final host = _ref.read(viewerHostProvider);
+    final r = await _engineCall(() => host.freeUpSpace(ids));
     if (r.freedCount == 0 && r.skipped.isNotEmpty) {
-      throw const ViewerActionException("Couldn't free up space for this item");
+      final reason = r.skipped.first.reason;
+      if (reason == 'cancelled') {
+        throw const ViewerActionException('Kept on this phone');
+      }
+      throw ViewerActionException(
+        "Couldn't free up space: ${freeUpSkipReason(reason).toLowerCase()}",
+      );
     }
   }
 }

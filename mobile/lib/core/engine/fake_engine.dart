@@ -162,4 +162,48 @@ class FakeEngine implements Engine {
     undoSkipCalls.add(sha256);
     attention = attention.where((a) => a.sha256 != sha256).toList();
   }
+
+  String accessToken = 'token-1';
+  final setSettingsCalls = <EngineSettings>[];
+  List<AlbumInfo> albums = [];
+  final freeUpCalls = <List<String>?>[];
+  FreeUpResult freeUpResult = FreeUpResult(
+    freedCount: 0,
+    freedBytes: 0,
+    skipped: [],
+  );
+
+  /// Thrown by [freeUpSpace] when set.
+  PlatformException? freeUpError;
+  final saveCalls = <String>[];
+
+  @override
+  Future<String> getAccessToken() async => accessToken;
+
+  @override
+  Future<void> setSettings(EngineSettings s) async {
+    setSettingsCalls.add(s);
+    settings = s;
+  }
+
+  @override
+  Future<List<AlbumInfo>> listAlbums() async => albums;
+
+  @override
+  Future<FreeUpResult> freeUpSpace(List<String>? localIds) async {
+    freeUpCalls.add(localIds);
+    final e = freeUpError;
+    if (e != null) throw e;
+    return freeUpResult;
+  }
+
+  @override
+  Future<String> saveToGallery(
+    String assetId,
+    String filename,
+    String mime,
+  ) async {
+    saveCalls.add(assetId);
+    return 'saved-$assetId';
+  }
 }

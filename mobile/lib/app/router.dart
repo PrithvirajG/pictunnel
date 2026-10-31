@@ -8,12 +8,13 @@ import '../features/attention/attention_screen.dart';
 import '../features/backup/backup_screen.dart';
 import '../features/pairing/manual_server_screen.dart';
 import '../features/pairing/pair_screen.dart';
+import '../features/settings/about_screen.dart';
+import '../features/settings/album_picker.dart';
+import '../features/settings/settings_screen.dart';
 import '../features/timeline/timeline_screen.dart';
 import '../features/trash/trash_screen.dart';
 import '../features/viewer/viewer_screen.dart';
 import 'shell.dart';
-import 'theme/tokens.dart';
-import 'theme/typography.dart';
 
 /// Whether the engine has a paired server (`engine.serverInfo() != null`).
 /// Re-evaluates when the engine reports `needsRepair` (credentials wiped) and
@@ -102,11 +103,19 @@ GoRouter buildRouter(Ref ref) {
             routes: [
               GoRoute(
                 path: '/settings',
-                builder: (_, _) => const PlaceholderScreen('Settings'),
+                builder: (_, _) => const SettingsScreen(),
                 routes: [
                   GoRoute(
                     path: 'trash',
                     builder: (_, _) => const TrashScreen(),
+                  ),
+                  GoRoute(
+                    path: 'albums',
+                    builder: (_, _) => const AlbumPickerScreen(),
+                  ),
+                  GoRoute(
+                    path: 'about',
+                    builder: (_, _) => const AboutScreen(),
                   ),
                 ],
               ),
@@ -116,23 +125,4 @@ GoRouter buildRouter(Ref ref) {
       ),
     ],
   );
-}
-
-/// Temporary screen body until the feature tasks replace each route.
-class PlaceholderScreen extends StatelessWidget {
-  const PlaceholderScreen(this.title, {super.key});
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
-        child: Align(
-          alignment: Alignment.topLeft,
-          child: Text(title, style: displayStyle(color: Tokens.text)),
-        ),
-      ),
-    );
-  }
 }
