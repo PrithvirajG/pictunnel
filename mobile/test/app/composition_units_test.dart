@@ -23,12 +23,34 @@ void main() {
       expect(spkiFingerprint(der), _certFp);
     });
 
-    test('fp16 prefix and full pin match; others do not', () {
-      expect(matchesPin(der, _certFp.substring(0, 16)), isTrue);
+    test('the exact full pin matches', () {
       expect(matchesPin(der, _certFp), isTrue);
-      expect(matchesPin(der, 'AAAAAAAAAAAAAAAA'), isFalse);
-      expect(matchesPin(der, _certFp.substring(0, 8)), isFalse);
+      // Padding and standard base64 normalize as the engines do.
+      final std = '${_certFp.replaceAll('-', '+').replaceAll('_', '/')}=';
+      expect(matchesPin(der, std), isTrue);
+    });
+
+    test('a mismatch on a later character is rejected', () {
+      for (final i in [16, 30, _certFp.length - 1]) {
+        final c = _certFp[i] == 'A' ? 'B' : 'A';
+        final pin = _certFp.replaceRange(i, i + 1, c);
+        expect(matchesPin(der, pin), isFalse, reason: 'differs at $i');
+      }
+    });
+
+    test('fails closed: no fp16 fallback, no short or missing pin', () {
+      expect(matchesPin(der, _certFp.substring(0, 16)), isFalse);
+      expect(matchesPin(der, _certFp.substring(0, _certFp.length - 1)), isFalse);
+      expect(matchesPin(der, '${_certFp}A'), isFalse);
+      expect(matchesPin(der, ''), isFalse);
       expect(matchesPin(der, null), isFalse);
+    });
+
+    test('constant-time equality', () {
+      expect(constantTimeEquals('abc', 'abc'), isTrue);
+      expect(constantTimeEquals('abc', 'abd'), isFalse);
+      expect(constantTimeEquals('abc', 'ab'), isFalse);
+      expect(constantTimeEquals('', ''), isTrue);
     });
 
     test('garbage is not a certificate', () {

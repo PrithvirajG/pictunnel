@@ -138,6 +138,16 @@ void main() {
     final src = rig.video.sources.single;
     expect(src.uri, 'https://pt.test/api/v1/assets/v/playback');
     expect(src.httpHeaders, {'Authorization': 'Bearer pt_at_test'});
+    expect(rig.playback.opened, ['v']);
+
+    // Leaving the viewer closes the playback session (the app's proxy).
+    await t.pumpWidget(const SizedBox());
+    await t.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await t.pump();
+    expect(rig.video.disposed, isNotEmpty);
+    expect(rig.playback.closed, 1);
   });
 
   testWidgets('Live Photo plays its video only while pressed', (t) async {

@@ -175,7 +175,7 @@ void main() {
     c.read(mirrorSyncProvider);
     expect(c.read(viewerHostProvider), isA<EngineViewerHost>());
     expect(c.read(shareServiceProvider), isA<PlusShareService>());
-    expect(c.read(playbackSourceProvider), isA<EndpointPlaybackSource>());
+    expect(c.read(playbackSourceProvider), isA<ProxyPlaybackSource>());
     expect(c.read(timelineActionsProvider), isA<ServerTimelineActions>());
     expect(c.read(viewerItemsProvider).hasError, isFalse);
     expect(c.read(libraryOwnerProvider), isNull);
@@ -190,9 +190,10 @@ void main() {
     expect(snap.uri.toString(), startsWith('https://192.168.1.20:8443/api/v1/'));
     expect(snap.headers['Authorization'], 'Bearer pt_at_engine');
     expect(snap.headers['PicTunnel-Client'], matches(RegExp(r'^(android|ios)/')));
-    final playback = c.read(playbackSourceProvider);
+    final playback = c.read(playbackSourceProvider) as ProxyPlaybackSource;
+    final upstream = await t.runAsync(() => playback.upstreamFor('a1'));
     expect(
-      playback.playbackUrl('a1').toString(),
+      upstream.toString(),
       'https://192.168.1.20:8443/api/v1/assets/a1/playback',
     );
     await shutDown(t, b);

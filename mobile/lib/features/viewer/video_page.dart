@@ -21,21 +21,38 @@ final videoControllerFactoryProvider = Provider<VideoControllerFactory>(
       ),
 );
 
-/// Opens the playback stream of [assetId] with the bearer header attached.
-/// The caller owns (and must dispose) the controller.
-Future<VideoPlayerController> openPlayback(
-  WidgetRef ref,
-  String assetId,
-) async {
-  final source = ref.read(playbackSourceProvider);
-  // Headers first: resolving them also settles the endpoint the URL uses.
-  final headers = await source.headers();
+/// A player over an open [PlaybackSession]; [dispose] releases both.
+class Playback {
+  Playback(this.controller, this._session);
+
+  final VideoPlayerController controller;
+  final PlaybackSession _session;
+
+  Future<void> dispose() async {
+    try {
+      await controller.dispose();
+    } finally {
+      await _session.close();
+    }
+  }
+}
+
+/// Opens the playback stream of [assetId] (through the pinned loopback proxy
+/// in the app). The caller owns the result and must [Playback.dispose] it.
+Future<Playback> openPlayback(WidgetRef ref, String assetId) async {
+  final session = await ref.read(playbackSourceProvider).open(assetId);
   final controller = ref.read(videoControllerFactoryProvider)(
-    source.playbackUrl(assetId),
-    headers,
+    session.url,
+    session.headers,
   );
-  await controller.initialize();
-  return controller;
+  final playback = Playback(controller, session);
+  try {
+    await controller.initialize();
+  } catch (_) {
+    await playback.dispose();
+    rethrow;
+  }
+  return playback;
 }
 
 /// Video over the authenticated `playback` URL (HTTP range streaming), with
@@ -50,7 +67,8 @@ class VideoPage extends ConsumerStatefulWidget {
 }
 
 class _VideoPageState extends ConsumerState<VideoPage> {
-  VideoPlayerController? _controller;
+  Playback? _playback;
+  VideoPlayerController? get _controller => _playback?.controller;
   bool _failed = false;
 
   @override
@@ -63,13 +81,13 @@ class _VideoPageState extends ConsumerState<VideoPage> {
     final id = widget.item.server?.id;
     if (id == null) return;
     try {
-      final c = await openPlayback(ref, id);
+      final p = await openPlayback(ref, id);
       if (!mounted) {
-        await c.dispose();
+        await p.dispose();
         return;
       }
-      c.addListener(_tick);
-      setState(() => _controller = c);
+      p.controller.addListener(_tick);
+      setState(() => _playback = p);
     } catch (_) {
       if (mounted) setState(() => _failed = true);
     }
@@ -81,9 +99,8 @@ class _VideoPageState extends ConsumerState<VideoPage> {
 
   @override
   void dispose() {
-    _controller
-      ?..removeListener(_tick)
-      ..dispose();
+    _controller?.removeListener(_tick);
+    _playback?.dispose();
     super.dispose();
   }
 

@@ -1,12 +1,15 @@
-/// Certificate pinning for the Flutter browse client (P§6.3).
+/// Certificate pinning for the Flutter browse client and the playback proxy
+/// (P§6.3).
 ///
 /// A chain the system trusts never reaches this code (dart:io accepts it).
 /// For anything else, the leaf's SPKI SHA-256, as unpadded base64url, must
-/// start with the pin the engine reports. The bridge only exposes `fp16` (the
-/// first 16 characters), so that prefix is what Flutter compares.
+/// equal the full pin the engine stores (`ServerConnection.fpFull`), compared
+/// in constant time. There is no fallback to the 16-character `fp16`: a short,
+/// missing or different pin is rejected.
 library;
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -19,13 +22,43 @@ String? spkiFingerprint(Uint8List der) {
   return base64Url.encode(sha256.convert(spki).bytes).replaceAll('=', '');
 }
 
-/// Whether the certificate matches [pinPrefix] (the stored pin or its first
-/// characters). An empty or short pin never matches.
-bool matchesPin(Uint8List der, String? pinPrefix) {
-  if (pinPrefix == null || pinPrefix.length < 16) return false;
+/// The length of an unpadded base64url SHA-256.
+const fullPinLength = 43;
+
+/// Whether the certificate's SPKI SHA-256 equals [pin], the full stored pin
+/// (unpadded base64url; padding and standard base64 are normalized as the
+/// engines do). Anything but a full-length pin is rejected.
+bool matchesPin(Uint8List der, String? pin) {
+  if (pin == null) return false;
+  final want = normalizePin(pin);
+  if (want.length != fullPinLength) return false;
   final fp = spkiFingerprint(der);
-  return fp != null && fp.startsWith(pinPrefix);
+  return fp != null && constantTimeEquals(fp, want);
 }
+
+/// Trims, drops `=` padding and maps standard base64 to base64url.
+String normalizePin(String pin) => pin
+    .trim()
+    .replaceAll(RegExp(r'=+$'), '')
+    .replaceAll('+', '-')
+    .replaceAll('/', '_');
+
+/// Equality whose running time does not depend on where the strings differ.
+bool constantTimeEquals(String a, String b) {
+  final x = utf8.encode(a), y = utf8.encode(b);
+  var diff = x.length ^ y.length;
+  for (var i = 0; i < x.length; i++) {
+    diff |= x[i] ^ (i < y.length ? y[i] : 0);
+  }
+  return diff == 0;
+}
+
+/// An [HttpClient] that accepts what the system trusts, or a leaf matching
+/// the pin [pin] returns at handshake time (the engine's current `fpFull`).
+HttpClient pinnedHttpClient(String? Function() pin) =>
+    HttpClient()
+      ..badCertificateCallback = (cert, host, port) =>
+          matchesPin(cert.der, pin());
 
 class _Tlv {
   const _Tlv(this.tag, this.start, this.contentStart, this.end);

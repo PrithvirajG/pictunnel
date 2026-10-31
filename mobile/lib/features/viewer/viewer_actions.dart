@@ -6,7 +6,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pictunnel_api/pictunnel_api.dart' as api;
 import 'package:share_plus/share_plus.dart';
 
-import '../../core/api/api_client.dart';
 import '../../core/engine/engine.dart';
 import '../../core/engine/error_copy.dart';
 import '../timeline/selection.dart';
@@ -43,27 +42,30 @@ final viewerHostProvider = Provider<ViewerHost>(
   (ref) => EngineViewerHost(ref.watch(engineProvider)),
 );
 
-/// Where a video streams from: the authenticated playback URL (range
-/// streaming) and the `Authorization` header to send with it.
-abstract interface class PlaybackSource {
-  Uri playbackUrl(String assetId);
-  Future<Map<String, String>> headers();
+/// One opened video stream: the URL (and headers) to hand to the player,
+/// valid until [close] (the viewer left).
+class PlaybackSession {
+  PlaybackSession(this.url, {this.headers = const {}, this.onClose});
+
+  final Uri url;
+  final Map<String, String> headers;
+
+  /// Releases what backs [url] (the proxy).
+  final Future<void> Function()? onClose;
+  bool _closed = false;
+
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await onClose?.call();
+  }
 }
 
-class ApiPlaybackSource implements PlaybackSource {
-  ApiPlaybackSource({required this.baseUrl, required this.tokens});
-  final String baseUrl;
-  final TokenProvider tokens;
-
-  @override
-  Uri playbackUrl(String assetId) => Uri.parse(
-    '${baseUrl.replaceAll(RegExp(r'/+$'), '')}/api/v1/assets/$assetId/playback',
-  );
-
-  @override
-  Future<Map<String, String>> headers() async => {
-    'Authorization': 'Bearer ${await tokens.accessToken()}',
-  };
+/// Where a video streams from (range streaming of the asset's `playback`
+/// URL). The real source opens a pinned loopback proxy per session, since
+/// the platform players only accept system-trusted certificates.
+abstract interface class PlaybackSource {
+  Future<PlaybackSession> open(String assetId);
 }
 
 final playbackSourceProvider = Provider<PlaybackSource>(

@@ -250,14 +250,18 @@ class FakeViewerHost implements ViewerHost {
 }
 
 class FakePlayback implements PlaybackSource {
-  @override
-  Uri playbackUrl(String assetId) =>
-      Uri.parse('https://pt.test/api/v1/assets/$assetId/playback');
+  final opened = <String>[];
+  var closed = 0;
 
   @override
-  Future<Map<String, String>> headers() async => {
-    'Authorization': 'Bearer pt_at_test',
-  };
+  Future<PlaybackSession> open(String assetId) async {
+    opened.add(assetId);
+    return PlaybackSession(
+      Uri.parse('https://pt.test/api/v1/assets/$assetId/playback'),
+      headers: const {'Authorization': 'Bearer pt_at_test'},
+      onClose: () async => closed++,
+    );
+  }
 }
 
 class FakeShare implements ShareService {
@@ -324,6 +328,7 @@ class ViewerRig {
   final host = FakeViewerHost();
   final share = FakeShare();
   final video = FakeVideoPlatform();
+  final playback = FakePlayback();
 
   List<Override> get overrides => [
     engineProvider.overrideWithValue(PhotoEngine()),
@@ -332,7 +337,7 @@ class ViewerRig {
     serverAssetsDaoProvider.overrideWithValue(dao),
     viewerHostProvider.overrideWithValue(host),
     shareServiceProvider.overrideWithValue(share),
-    playbackSourceProvider.overrideWithValue(FakePlayback()),
+    playbackSourceProvider.overrideWithValue(playback),
     libraryOwnerProvider.overrideWithValue('alice'),
     thumbCacheProvider.overrideWithValue(FakeThumbCache(tinyPng)),
   ];

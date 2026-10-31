@@ -21,7 +21,7 @@ class LivePhotoPage extends ConsumerStatefulWidget {
 }
 
 class _LivePhotoPageState extends ConsumerState<LivePhotoPage> {
-  VideoPlayerController? _controller;
+  Playback? _playback;
   int _press = 0;
 
   Future<void> _start() async {
@@ -29,14 +29,14 @@ class _LivePhotoPageState extends ConsumerState<LivePhotoPage> {
     if (id == null) return;
     final press = ++_press;
     try {
-      final c = await openPlayback(ref, id);
+      final p = await openPlayback(ref, id);
       if (!mounted || press != _press) {
-        await c.dispose();
+        await p.dispose();
         return;
       }
-      await c.setLooping(true);
-      await c.play();
-      setState(() => _controller = c);
+      await p.controller.setLooping(true);
+      await p.controller.play();
+      setState(() => _playback = p);
     } catch (_) {
       // The still stays on screen when the clip cannot be loaded.
     }
@@ -44,21 +44,21 @@ class _LivePhotoPageState extends ConsumerState<LivePhotoPage> {
 
   void _stop() {
     _press++;
-    final c = _controller;
-    if (c == null) return;
-    setState(() => _controller = null);
-    c.dispose();
+    final p = _playback;
+    if (p == null) return;
+    setState(() => _playback = null);
+    p.dispose();
   }
 
   @override
   void dispose() {
-    _controller?.dispose();
+    _playback?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final c = _controller;
+    final c = _playback?.controller;
     return GestureDetector(
       key: const Key('livePhoto'),
       onLongPressStart: (_) => _start(),

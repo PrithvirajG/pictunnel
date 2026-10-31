@@ -100,7 +100,7 @@ String clientHeaderFor(String version) =>
 
 /// The browse/account client: endpoint from the engine, tokens from the
 /// engine, and certificates accepted when the system trusts them or the leaf
-/// matches the pinned SPKI fingerprint.
+/// matches the full pinned SPKI fingerprint (`fpFull`).
 PictunnelApi buildServerApi({
   required ServerEndpoint endpoint,
   required TokenProvider tokens,
@@ -116,9 +116,7 @@ PictunnelApi buildServerApi({
   dio.httpClientAdapter =
       adapter ??
       IOHttpClientAdapter(
-        createHttpClient: () => HttpClient()
-          ..badCertificateCallback = (cert, host, port) =>
-              matchesPin(cert.der, endpoint.current?.fp16),
+        createHttpClient: () => pinnedHttpClient(() => endpoint.current?.fpFull),
       );
   dio.interceptors.add(
     EndpointInterceptor(endpoint, clientHeader: clientHeader),

@@ -15,6 +15,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pictunnel_api/pictunnel_api.dart';
 
 import '../core/api/api_client.dart';
+import '../core/api/pinning.dart';
+import '../core/api/playback_proxy.dart';
 import '../core/api/server_endpoint.dart';
 import '../core/db/app_db.dart';
 import '../core/db/server_assets_dao.dart';
@@ -213,7 +215,7 @@ List<Override> appOverrides(AppEnvironment env) => [
   ),
   shareServiceProvider.overrideWith(PlusShareService.new),
   playbackSourceProvider.overrideWith(
-    (ref) => EndpointPlaybackSource(
+    (ref) => ProxyPlaybackSource(
       ref.watch(serverEndpointProvider),
       ref.watch(tokenProviderProvider),
     ),
@@ -270,24 +272,34 @@ List<Override> appOverrides(AppEnvironment env) => [
   }),
 ];
 
-/// Video playback straight from the server (range streaming), at the
-/// engine's active endpoint, with a fresh bearer token.
-class EndpointPlaybackSource implements PlaybackSource {
-  EndpointPlaybackSource(this._endpoint, this._tokens);
+/// Video playback (range streaming) through a [PlaybackProxy] per session:
+/// the player gets a loopback URL; the proxy calls the engine's active
+/// endpoint with the full SPKI pin and a fresh bearer token per request.
+class ProxyPlaybackSource implements PlaybackSource {
+  ProxyPlaybackSource(this._endpoint, this._tokens);
   final ServerEndpoint _endpoint;
   final TokenProvider _tokens;
 
-  @override
-  Uri playbackUrl(String assetId) {
-    final c = _endpoint.current;
-    final base = c == null ? '' : ServerEndpoint.baseOf(c);
-    return Uri.parse('$base/api/v1/assets/$assetId/playback');
+  /// The server's playback URL for [assetId] at the active endpoint.
+  Future<Uri> upstreamFor(String assetId) async {
+    final c = await _endpoint.resolve();
+    return Uri.parse(
+      '${ServerEndpoint.baseOf(c)}/api/v1/assets/'
+      '${Uri.encodeComponent(assetId)}/playback',
+    );
   }
 
   @override
-  Future<Map<String, String>> headers() async {
-    // Resolving here also refreshes the endpoint before the URL is used.
-    await _endpoint.resolve();
-    return {'Authorization': 'Bearer ${await _tokens.accessToken()}'};
+  Future<PlaybackSession> open(String assetId) async {
+    await upstreamFor(assetId); // fails early when unpaired
+    final proxy = await PlaybackProxy.start(
+      client: pinnedHttpClient(() => _endpoint.current?.fpFull),
+      upstream: () => upstreamFor(assetId),
+      headers: () async => {
+        'Authorization': 'Bearer ${await _tokens.accessToken()}',
+        'PicTunnel-Client': clientHeaderFor(appVersion),
+      },
+    );
+    return PlaybackSession(proxy.url, onClose: proxy.close);
   }
 }
