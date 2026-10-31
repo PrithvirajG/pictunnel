@@ -79,6 +79,10 @@ public struct SettingsRepo: Sendable {
 
     public func setLastRunAtMs(_ ms: Int64) throws { try db.setSetting(Keys.lastRunAt, String(ms)) }
 
+    /// The run state that belongs to one pairing (the pause and the last run), cleared with its
+    /// index. The user's settings are not in it.
+    public static let pairingStateKeys = [Keys.pauseReason, Keys.pauseUntil, Keys.lastRunAt]
+
     private enum Keys {
         static let wifiOnly = "wifi_only"
         static let chargingOnly = "charging_only"

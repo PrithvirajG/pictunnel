@@ -353,12 +353,16 @@ extension EngineDB {
         try write { db in try db.execute(sql: "DELETE FROM settings WHERE key = ?", arguments: [key]) }
     }
 
-    /// Empties every table (unpairing, or pairing with another server): the index, hash cache,
-    /// scan token, activity log and settings start over.
-    public func reset() throws {
+    /// Empties the index of a server (unpairing, or pairing with another server), in one
+    /// transaction: items, the scan token and the activity log go, plus the given settings keys.
+    /// The hash cache (it describes the phone's files, not the server) and every other setting stay.
+    public func clearIndex(removingSettings keys: [String]) throws {
         try write { db in
-            for table in ["items", "hash_cache", "scan_state", "activity", "settings"] {
+            for table in ["items", "scan_state", "activity"] {
                 try db.execute(sql: "DELETE FROM \(table)")
+            }
+            for key in keys {
+                try db.execute(sql: "DELETE FROM settings WHERE key = ?", arguments: [key])
             }
         }
     }

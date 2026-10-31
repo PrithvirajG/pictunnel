@@ -41,6 +41,8 @@ public actor AuthManager {
     /// A rotated refresh token the store failed to persist; used until a save succeeds, so the
     /// next refresh never presents the stale one (which would count as reuse after 30 s).
     private var unsavedRefreshToken: String?
+    /// Set by `close`: the session is over (unpaired or replaced by a new pairing).
+    private var closed = false
 
     public init(store: CredentialStore, http: EngineHTTP, endpoints: Endpoints,
                 onNeedsRepair: (@Sendable () -> Void)? = nil,
@@ -86,9 +88,30 @@ public actor AuthManager {
         unsavedRefreshToken = nil
     }
 
+    /// Ends this session before its credentials are wiped or replaced (unpair, pairing): no refresh
+    /// starts after it, the one in flight is cancelled and awaited (so it ends within the time a
+    /// cancelled request takes, not its 60 s timeout), and then `block` runs (the wipe). A refresh
+    /// answer that still arrives is never saved: `closed` stops it, and the compare-and-save in
+    /// `performRefresh` stops one that raced a wipe made outside this lock.
+    public func close<T: Sendable>(_ block: @Sendable () throws -> T) async rethrows -> T {
+        closed = true
+        token = nil
+        validUntil = 0
+        unsavedRefreshToken = nil
+        if let inflight {
+            inflight.cancel()
+            _ = await inflight.value
+        }
+        return try block()
+    }
+
+    /// True once `close` ran: this session never refreshes again.
+    public var isClosed: Bool { closed }
+
     /// Single flight: callers join the refresh in flight, and a caller whose token was already
     /// replaced by a still-valid one gets `.refreshed` without a request.
     private func refresh(stale: String?) async -> RefreshOutcome {
+        if closed { return .needsRepair(nil) }
         if let token, token != stale, uptime() < validUntil { return .refreshed }
         if let inflight { return await inflight.value }
         let task = Task { await self.performRefresh() }
@@ -136,15 +159,25 @@ public actor AuthManager {
             return .transient(ServerOutcome(error: error))
         }
 
+        // Closed while the request was out: whatever came back belongs to a session that is over.
+        if closed { return .needsRepair(nil) }
+
         if raw.isSuccess {
             guard let pair = try? JSONDecoder().decode(TokenPair.self, from: data),
                   !pair.accessToken.isEmpty, !pair.refreshToken.isEmpty else {
                 return .transient(raw)
             }
-            // Persist the rotated refresh token before using the new access token.
+            // Persist the rotated refresh token before using the new access token, unless the
+            // credentials were wiped or replaced while the refresh was in flight.
+            let expected = creds.refreshToken
             creds.refreshToken = pair.refreshToken
             do {
-                try store.save(creds)
+                guard try store.compareAndSave(expectedRefreshToken: expected, creds) else {
+                    token = nil
+                    validUntil = 0
+                    unsavedRefreshToken = nil
+                    return .needsRepair(nil)
+                }
                 unsavedRefreshToken = nil
             } catch {
                 unsavedRefreshToken = pair.refreshToken

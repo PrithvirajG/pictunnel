@@ -25,6 +25,19 @@ public protocol CredentialStore: Sendable {
     func load() throws -> Credentials?
     func save(_ c: Credentials) throws
     func wipe() throws
+    /// Saves `c` only if the stored refresh token is still `expectedRefreshToken` (nothing was
+    /// wiped or re-paired meanwhile); false when nothing was saved. A rotated token from a refresh
+    /// that raced an unpair or a new pairing must never bring the old credentials back.
+    func compareAndSave(expectedRefreshToken: String, _ c: Credentials) throws -> Bool
+}
+
+extension CredentialStore {
+    /// Compare, then save; stores that can lock override it to make the pair atomic.
+    public func compareAndSave(expectedRefreshToken: String, _ c: Credentials) throws -> Bool {
+        guard try load()?.refreshToken == expectedRefreshToken else { return false }
+        try save(c)
+        return true
+    }
 }
 
 /// A thread-safe in-memory `CredentialStore` for tests and Linux.
@@ -57,6 +70,15 @@ public final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable
         locked {
             _wipes += 1
             _creds = nil
+        }
+    }
+
+    public func compareAndSave(expectedRefreshToken: String, _ c: Credentials) throws -> Bool {
+        locked {
+            guard _creds?.refreshToken == expectedRefreshToken else { return false }
+            _saved.append(c)
+            _creds = c
+            return true
         }
     }
 
