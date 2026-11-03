@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../app/router.dart' show serverConnectedProvider;
 import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
 import '../../core/engine/engine.dart';
 import '../../core/engine/error_copy.dart';
+import '../settings/server_section.dart' show unpairActionProvider;
 import 'backup_providers.dart';
 
 /// Banner copy keyed by `PauseReason.name` (spec M§8). Adding a reason is one
@@ -80,24 +80,21 @@ class StatusBanner extends ConsumerWidget {
   final BannerSpec spec;
 
   Future<void> _act(BuildContext context, WidgetRef ref) async {
-    final engine = ref.read(engineProvider);
-    switch (spec.action) {
-      case BannerAction.resume:
-        await engine.runNow();
-      case BannerAction.allowFullAccess:
-        final messenger = ScaffoldMessenger.maybeOf(context);
-        try {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    try {
+      switch (spec.action) {
+        case BannerAction.resume:
+          await ref.read(engineProvider).runNow();
+        case BannerAction.allowFullAccess:
           await ref.read(requestFullAccessProvider)();
-        } catch (e) {
-          messenger?.showSnackBar(
-            SnackBar(content: Text(engineErrorMessage(e))),
-          );
-        }
-      case BannerAction.pairAgain:
-        await engine.unpair();
-        ref.invalidate(serverConnectedProvider);
-      case BannerAction.none:
-        break;
+        case BannerAction.pairAgain:
+          // The same unpair as Settings: engine, local mirror, then pairing.
+          await ref.read(unpairActionProvider)();
+        case BannerAction.none:
+          break;
+      }
+    } catch (e) {
+      messenger?.showSnackBar(SnackBar(content: Text(engineErrorMessage(e))));
     }
   }
 

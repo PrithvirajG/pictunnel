@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -10,6 +11,8 @@ import 'package:pictunnel/features/attention/attention_screen.dart';
 import 'package:pictunnel/features/backup/backup_providers.dart';
 import 'package:pictunnel/features/backup/backup_screen.dart';
 import 'package:pictunnel/features/backup/banners.dart';
+import 'package:pictunnel/features/settings/server_section.dart';
+import 'package:pictunnel/core/engine/error_copy.dart';
 
 BackupStatus status({
   int backedUp = 12482,
@@ -43,10 +46,11 @@ UploadProgress upload() => UploadProgress(
   bytesPerSecond: 1468006.0,
 );
 
+/// Queued item i; q0 is the newest, as the engine pages them.
 PhoneItem queuedItem(int i) => PhoneItem(
   localId: 'q$i',
   filename: 'IMG_000$i.HEIC',
-  takenAtMs: DateTime(2026, 10, 3, 14, i).millisecondsSinceEpoch,
+  takenAtMs: DateTime(2026, 10, 3, 14, 10 - i).millisecondsSinceEpoch,
   mime: i.isEven ? 'image/heic' : 'video/mp4',
   size: 1000,
   state: ItemState.queued,
@@ -69,10 +73,26 @@ FakeEngine engineWith(BackupStatus s) {
   return e;
 }
 
+/// An engine whose actions fail with [code].
+class FailingEngine extends FakeEngine {
+  FailingEngine(this.code);
+  final String code;
+
+  @override
+  Future<void> runNow() async => throw PlatformException(code: code);
+  @override
+  Future<void> retry(List<String> localIds) async =>
+      throw PlatformException(code: code);
+  @override
+  Future<void> undoSkip(String sha256) async =>
+      throw PlatformException(code: code);
+}
+
 Future<void> pumpBackup(
   WidgetTester t,
   FakeEngine e, {
   MediaAccess access = MediaAccess.full,
+  Future<void> Function()? unpair,
 }) async {
   t.view.physicalSize = const Size(390 * 2, 844 * 2);
   t.view.devicePixelRatio = 2;
@@ -98,6 +118,7 @@ Future<void> pumpBackup(
       overrides: [
         engineProvider.overrideWithValue(e),
         mediaAccessProvider.overrideWithValue(access),
+        if (unpair != null) unpairActionProvider.overrideWithValue(unpair),
       ],
       child: MaterialApp.router(
         debugShowCheckedModeBanner: false,
@@ -249,6 +270,70 @@ void main() {
     await t.tap(find.text('Resume'));
     expect(e.runNowCalls, 1);
   });
+
+  testWidgets('a failing Resume says why', (t) async {
+    final e = FailingEngine('unreachable')
+      ..connection = engineWith(status()).connection
+      ..status = status(paused: true, reason: PauseReason.user);
+    await pumpBackup(t, e);
+    await t.tap(find.text('Resume'));
+    await t.pumpAndSettle();
+    expect(find.text(engineErrorCopy['unreachable']!), findsOneWidget);
+  });
+
+  testWidgets('Pair again on the banner runs the Settings unpair', (t) async {
+    final e = engineWith(
+      status(paused: true, reason: PauseReason.serverCertificateChanged),
+    );
+    var unpairs = 0;
+    await pumpBackup(t, e, unpair: () async => unpairs++);
+    await t.tap(find.text('Pair again'));
+    await t.pumpAndSettle();
+    expect(unpairs, 1);
+    expect(e.unpairCalls, 0, reason: 'not the bare engine call');
+  });
+
+  testWidgets('a failing Pair again says why', (t) async {
+    final e = engineWith(
+      status(paused: true, reason: PauseReason.serverCertificateChanged),
+    );
+    await pumpBackup(
+      t,
+      e,
+      unpair: () async => throw PlatformException(code: 'internal'),
+    );
+    await t.tap(find.text('Pair again'));
+    await t.pumpAndSettle();
+    expect(find.text(engineErrorCopy['internal']!), findsOneWidget);
+  });
+
+  for (final tombstoned in [false, true]) {
+    testWidgets(
+      'a failing ${tombstoned ? 'Back up again' : 'Retry'} says why',
+      (t) async {
+        final e = FailingEngine('not_paired')
+          ..connection = engineWith(status()).connection
+          ..status = status(needsAttention: 1)
+          ..attention = [
+            AttentionItem(
+              localId: 'x',
+              filename: 'IMG_1.JPG',
+              code: tombstoned ? 'tombstoned' : 'file_too_large',
+              message: 'm',
+              attempts: 1,
+              sha256: tombstoned ? 'ab' * 32 : null,
+            ),
+          ];
+        await pumpBackup(t, e);
+        await t.tap(find.text('Needs attention (1)'));
+        await t.pumpAndSettle();
+        await t.tap(find.text(tombstoned ? 'Back up again' : 'Retry'));
+        await t.pumpAndSettle();
+        expect(find.text(engineErrorCopy['not_paired']!), findsOneWidget);
+        expect(find.text('IMG_1.JPG'), findsOneWidget);
+      },
+    );
+  }
 
   group('permissionBannerStates', () {
     test('every pause reason has copy; certificate copy exists', () {

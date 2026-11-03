@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
 import '../../core/engine/engine.dart';
+import '../../core/engine/error_copy.dart';
 import '../backup/backup_providers.dart';
 
 /// User-facing copy per problem code (spec M§8, P§8). Unknown codes fall back
@@ -94,10 +95,17 @@ class _Row extends ConsumerWidget {
             ),
             onPressed: () async {
               final engine = ref.read(engineProvider);
-              if (sha != null) {
-                await engine.undoSkip(sha);
-              } else {
-                await engine.retry([item.localId]);
+              final messenger = ScaffoldMessenger.maybeOf(context);
+              try {
+                if (sha != null) {
+                  await engine.undoSkip(sha);
+                } else {
+                  await engine.retry([item.localId]);
+                }
+              } catch (e) {
+                messenger?.showSnackBar(
+                  SnackBar(content: Text(engineErrorMessage(e))),
+                );
               }
               ref.invalidate(attentionProvider);
             },

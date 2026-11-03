@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart' show AppLifecycleListener;
@@ -5,13 +6,36 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
 
-/// Seeds from `getStatus()` then follows `status$`.
-final backupStatusProvider = StreamProvider.autoDispose<BackupStatus>((
-  ref,
-) async* {
+/// Seeds from `getStatus()` then follows `status$`. A failing seed or a
+/// failing event is reported as that emission's error; the provider keeps
+/// following `status$` either way, and a live status is never replaced by a
+/// seed that answered late.
+final backupStatusProvider = StreamProvider.autoDispose<BackupStatus>((ref) {
   final engine = ref.watch(engineProvider);
-  yield await engine.getStatus();
-  yield* engine.status$;
+  final out = StreamController<BackupStatus>();
+  var live = false;
+  final sub = engine.status$.listen(
+    (s) {
+      live = true;
+      out.add(s);
+    },
+    onError: (Object e, StackTrace st) {
+      if (!out.isClosed) out.addError(e, st);
+    },
+  );
+  ref.onDispose(() {
+    sub.cancel();
+    out.close();
+  });
+  Future<BackupStatus>.sync(engine.getStatus).then(
+    (s) {
+      if (!live && !out.isClosed) out.add(s);
+    },
+    onError: (Object e, StackTrace st) {
+      if (!live && !out.isClosed) out.addError(e, st);
+    },
+  );
+  return out.stream;
 });
 
 final serverInfoProvider = FutureProvider.autoDispose<ServerConnection?>(
