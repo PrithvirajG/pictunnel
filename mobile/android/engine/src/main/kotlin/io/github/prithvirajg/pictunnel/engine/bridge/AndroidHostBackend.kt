@@ -213,6 +213,10 @@ class AndroidHostBackend(
                 prompt = prompt,
                 canAskAgain = PermissionDialog::canAskAgain,
                 openSettings = { PermissionDialog.openAppSettings(app) },
+                notificationsGranted = {
+                    app.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                        android.content.pm.PackageManager.PERMISSION_GRANTED
+                },
             ).request() ?: throw HostException("no_activity", "Open PicTunnel to allow access")
         services.session()?.controller?.let { c ->
             c.onMediaAccessChanged()

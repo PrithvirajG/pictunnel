@@ -110,7 +110,10 @@ object PermissionDialog : PermissionPrompt {
  * - otherwise the read permissions (+ `ACCESS_MEDIA_LOCATION`) are requested;
  * - on API 34+ choosing "Select photos" is an answer: [MediaAccess.Partial];
  * - when the user can no longer be asked (denied with "don't ask again"),
- *   the app's settings page opens instead.
+ *   the app's settings page opens instead;
+ * - on API 33+ `POST_NOTIFICATIONS` (upload progress and pause notices) is
+ *   asked in the same dialog while it is not granted, even when media access
+ *   is already full. Its answer never opens the settings page.
  * Returns the access afterwards, or null when no activity can show the dialog.
  */
 class MediaAccessRequester(
@@ -119,11 +122,16 @@ class MediaAccessRequester(
     private val canAskAgain: (String) -> Boolean,
     private val openSettings: () -> Unit,
     private val sdkInt: Int = Build.VERSION.SDK_INT,
+    private val notificationsGranted: () -> Boolean = { true },
 ) {
     suspend fun request(): MediaAccess? {
         val before = access()
-        if (before == MediaAccess.Full) return before
-        val answers = prompt.request(MediaPermissions.required(sdkInt)) ?: return null
+        val notifications = notificationPermissions()
+        if (before == MediaAccess.Full) {
+            if (notifications.isNotEmpty()) prompt.request(notifications)
+            return before
+        }
+        val answers = prompt.request(MediaPermissions.required(sdkInt) + notifications) ?: return null
         val after = access()
         if (after == MediaAccess.Full || answers.isEmpty()) return after
         if (sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && after == MediaAccess.Partial) return after
@@ -131,6 +139,13 @@ class MediaAccessRequester(
         if (denied.isNotEmpty() && denied.none(canAskAgain)) openSettings()
         return after
     }
+
+    private fun notificationPermissions(): List<String> =
+        if (sdkInt >= Build.VERSION_CODES.TIRAMISU && !notificationsGranted()) {
+            listOf(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            emptyList()
+        }
 
     private fun fullReadPermissions(): List<String> =
         if (sdkInt >= Build.VERSION_CODES.TIRAMISU) {

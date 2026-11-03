@@ -16,6 +16,7 @@ class MediaAccessRequesterTest {
         val askAgain: Boolean = true,
         /** The access the OS reports once the dialog was answered. */
         val afterAnswer: MediaAccess? = null,
+        val notificationsGranted: Boolean = true,
     ) {
         val asked = ArrayList<List<String>>()
         var settingsOpened = 0
@@ -30,6 +31,7 @@ class MediaAccessRequesterTest {
                 canAskAgain = { askAgain },
                 openSettings = { settingsOpened++ },
                 sdkInt = sdk,
+                notificationsGranted = { notificationsGranted },
             )
     }
 
@@ -98,5 +100,49 @@ class MediaAccessRequesterTest {
             val h = Harness(MediaAccess.None, 30, { p -> p.associateWith { true } }, afterAnswer = MediaAccess.Full)
             assertEquals(MediaAccess.Full, h.requester().request())
             assertEquals(listOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.ACCESS_MEDIA_LOCATION), h.asked.single())
+        }
+
+    @Test fun api33AsksForNotificationsWithTheMediaPermissions() =
+        runBlocking {
+            val h =
+                Harness(
+                    MediaAccess.None, 33, { p -> p.associateWith { true } },
+                    afterAnswer = MediaAccess.Full, notificationsGranted = false,
+                )
+            assertEquals(MediaAccess.Full, h.requester().request())
+            assertEquals(
+                listOf(
+                    Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO,
+                    Manifest.permission.ACCESS_MEDIA_LOCATION, Manifest.permission.POST_NOTIFICATIONS,
+                ),
+                h.asked.single(),
+            )
+        }
+
+    @Test fun fullMediaAccessStillAsksForNotificationsOnApi33() =
+        runBlocking {
+            val h = Harness(MediaAccess.Full, 33, { p -> p.associateWith { false } }, askAgain = false, notificationsGranted = false)
+            assertEquals(MediaAccess.Full, h.requester().request())
+            assertEquals(listOf(Manifest.permission.POST_NOTIFICATIONS), h.asked.single())
+            assertEquals("a notification denial never opens settings", 0, h.settingsOpened)
+        }
+
+    @Test fun deniedNotificationsAloneDoNotOpenSettings() =
+        runBlocking {
+            val h =
+                Harness(
+                    MediaAccess.None, 33,
+                    { p -> p.associateWith { it != Manifest.permission.POST_NOTIFICATIONS } },
+                    askAgain = false, afterAnswer = MediaAccess.Full, notificationsGranted = false,
+                )
+            assertEquals(MediaAccess.Full, h.requester().request())
+            assertEquals(0, h.settingsOpened)
+        }
+
+    @Test fun beforeApi33NotificationsAreNeverAsked() =
+        runBlocking {
+            val h = Harness(MediaAccess.Full, 32, { error("must not ask") }, notificationsGranted = false)
+            assertEquals(MediaAccess.Full, h.requester().request())
+            assertTrue(h.asked.isEmpty())
         }
 }
