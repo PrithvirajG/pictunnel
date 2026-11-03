@@ -3,7 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pictunnel/core/engine/engine.dart';
 import 'package:pictunnel/core/engine/fake_engine.dart';
 import 'package:pictunnel/core/thumbs/thumb_image.dart';
+import 'package:pictunnel/core/db/app_db.dart';
+import 'package:pictunnel/features/timeline/month_section.dart';
 import 'package:pictunnel/features/timeline/tile.dart';
+import 'package:pictunnel/features/timeline/timeline_providers.dart';
 
 import '../support/timeline_harness.dart';
 
@@ -341,5 +344,125 @@ void main() {
       await t.pump();
       await t.pump(const Duration(seconds: 1));
     });
+  });
+
+  testWidgets('100k items: bounded work per scroll and per month change', (
+    t,
+  ) async {
+    // 100 months of 1000 phone items; every other one also on the server.
+    final e = CountingEngine();
+    final assets = <ServerAsset>[];
+    final items = <PhoneItem>[];
+    for (var m = 0; m < 100; m++) {
+      final start = DateTime(2018, 1 + m);
+      for (var i = 0; i < 1000; i++) {
+        final at = start.add(Duration(minutes: i * 30 + 1));
+        final sha = i.isEven ? 'sha${m}_$i' : null;
+        items.add(phone('m${m}_$i', at, sha: sha, state: ItemState.backedUp));
+        if (sha != null) assets.add(server('s${m}_$i', sha, at));
+      }
+    }
+    e.phoneItems = items;
+    final dao = FakeDao(assets);
+    await pumpTimeline(t, engine: e, dao: dao);
+
+    // Start: one keys-only walk of the index for the month counts
+    // (100k / 500 per page), plus only the months around the viewport.
+    final walk = (100000 / phonePageSize).ceil();
+    final firstMonths = dao.monthWatches.toSet();
+    expect(firstMonths.length, inInclusiveRange(1, 3));
+    expect(e.pageRequests.length, lessThanOrEqualTo(walk + 1 + 3 * 3));
+    expect(find.byType(TimelineTile), findsWidgets);
+
+    final scrollable = t.state<ScrollableState>(
+      find.descendant(
+        of: find.byKey(const Key('timelineList')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    final pos = scrollable.position;
+
+    // Scrolling within a month loads nothing.
+    var pages = e.pageRequests.length;
+    var watches = dao.monthWatches.length;
+    for (var i = 0; i < 5; i++) {
+      pos.jumpTo(pos.pixels + 300);
+      await t.pump();
+    }
+    await t.pumpAndSettle();
+    expect(e.pageRequests.length - pages, 0);
+    expect(dao.monthWatches.length - watches, 0);
+
+    // Jumping deep into the library: only the months now near the viewport
+    // are read (each at most 3 pages of 500), never the ones in between.
+    pages = e.pageRequests.length;
+    watches = dao.monthWatches.length;
+    pos.jumpTo(pos.maxScrollExtent / 2);
+    await t.pump();
+    await t.pumpAndSettle();
+    final newMonths = dao.monthWatches.sublist(watches).toSet();
+    expect(newMonths.length, inInclusiveRange(1, 3));
+    expect(dao.monthWatches.length - watches, newMonths.length);
+    expect(e.pageRequests.length - pages, lessThanOrEqualTo(3 * 3));
+    expect(find.byType(TimelineTile), findsWidgets);
+    expect(find.byType(PlaceholderRowView), findsNothing);
+    final keys = [
+      for (final w in t.widgetList<TimelineTile>(find.byType(TimelineTile)))
+        w.item.key,
+    ];
+    expect(keys.any((k) => k.startsWith('sha') || k.startsWith('local:')),
+        isTrue);
+
+    // Into the next month: one more month, bounded again.
+    pages = e.pageRequests.length;
+    watches = dao.monthWatches.length;
+    pos.jumpTo(pos.pixels + 50000);
+    await t.pump();
+    await t.pumpAndSettle();
+    expect(dao.monthWatches.length - watches, inInclusiveRange(1, 3));
+    expect(e.pageRequests.length - pages, lessThanOrEqualTo(3 * 3));
+  });
+
+  testWidgets('200% text fits the fixed-extent month headers', (t) async {
+    t.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(t.platformDispatcher.clearTextScaleFactorTestValue);
+    final m = mixed();
+    await pumpTimeline(t, engine: m.engine, assets: m.assets);
+    expect(t.takeException(), isNull);
+    for (final label in ['This week', 'September 2026', 'August 2026']) {
+      final text = t.getRect(find.text(label));
+      final header = t.getRect(
+        find.ancestor(of: find.text(label), matching: find.byType(SectionHeader)),
+      );
+      expect(text.height, greaterThan(30), reason: 'scaled');
+      expect(header.top <= text.top && text.bottom <= header.bottom, isTrue,
+          reason: '$label $text inside $header');
+    }
+    // Tiles stay on their rows below the header.
+    final header = t.getRect(find.ancestor(
+        of: find.text('September 2026'), matching: find.byType(SectionHeader)));
+    expect(t.getRect(tileOf('shaOnly1')).top, greaterThanOrEqualTo(header.bottom));
+  });
+
+  testWidgets('pull to refresh runs the refresh action', (t) async {
+    final m = mixed();
+    var refreshes = 0;
+    await pumpTimeline(t, engine: m.engine, assets: m.assets,
+        refresh: () async => refreshes++);
+    await t.fling(find.byKey(const Key('timelineList')), const Offset(0, 400), 1000);
+    await t.pumpAndSettle();
+    expect(refreshes, 1);
+  });
+
+  testWidgets('pull to refresh default: engine run and a fresh index walk', (
+    t,
+  ) async {
+    final e = FakeEngine()..phoneItems = [phone('a', DateTime(2026, 10, 10))];
+    await pumpTimeline(t, engine: e);
+    final pages = e.pageRequests.length;
+    await t.fling(find.byKey(const Key('timelineList')), const Offset(0, 400), 1000);
+    await t.pumpAndSettle();
+    expect(e.runNowCalls, 1);
+    expect(e.pageRequests.length, greaterThan(pages));
   });
 }

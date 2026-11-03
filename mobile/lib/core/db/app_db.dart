@@ -4,8 +4,11 @@ part 'app_db.g.dart';
 
 /// Mirror of the server's asset metadata (sync-protocol §4.1). Only fields the
 /// browse UI needs are kept. `year`/`month` are the wall-clock month of the
-/// capture time (taken_at plus its offset, else created_at in UTC).
+/// capture time (taken_at plus its offset, else created_at in UTC); the
+/// timeline buckets by `sortAt` in the phone's zone instead, like the phone
+/// index, so both sides agree on the month.
 @DataClassName('ServerAsset')
+@TableIndex(name: 'server_assets_sort_at', columns: {#sortAt})
 class ServerAssets extends Table {
   TextColumn get id => text()();
   TextColumn get sha256 => text()();
@@ -22,6 +25,10 @@ class ServerAssets extends Table {
   TextColumn get state => text()();
   BoolColumn get thumbnailsReady => boolean()();
   IntColumn get updatedSeq => integer()();
+
+  /// The snapshot generation that last listed this row; rows a completed
+  /// snapshot did not list are removed (sync-protocol §7.6 resync).
+  IntColumn get snapshotGen => integer().nullable()();
 
   @override
   Set<Column<Object>> get primaryKey => {id};
@@ -54,7 +61,17 @@ class AppDb extends _$AppDb {
   AppDb(super.e);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+    onUpgrade: (m, from, to) async {
+      if (from < 2) {
+        await m.addColumn(serverAssets, serverAssets.snapshotGen);
+        await m.create(serverAssetsSortAt);
+      }
+    },
+  );
 
   Future<String?> getMeta(String key) async {
     final row = await (select(syncMeta)..where((t) => t.key.equals(key)))

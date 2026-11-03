@@ -68,8 +68,10 @@ void main() {
     expect(await dao.cursor(), '12');
     expect(fake.requests.first.headers['Authorization'], startsWith('Bearer '));
     expect(emitted.fold<int>(0, (a, b) => a + b), 4);
-    expect(await dao.monthsWithCounts().first, [const MonthCount(2026, 3, 4)]);
-    expect((await dao.watchMonth(2026, 3).first).length, 4);
+    final counts = await dao.watchMonthCounts().first;
+    expect(counts.values.fold<int>(0, (a, b) => a + b), 4);
+    final month = counts.keys.single;
+    expect((await dao.watchMonth(month).first).length, 4);
   });
 
   test('cursorExpiredResnapshots', () async {
@@ -97,6 +99,91 @@ void main() {
     expect(await dao.byId('old'), isNull);
     expect(await dao.byId('new'), isNotNull);
     expect(await dao.cursor(), '50');
+  });
+
+  test('410 re-snapshots first, then drops only rows it no longer lists',
+      () async {
+    await dao.upsert(_asset('old', 1));
+    await dao.upsert(_asset('kept', 2));
+    await dao.setCursor('3');
+    var failSecondPage = true;
+    final fake = FakeAdapter((r) {
+      if (r.path.endsWith('/sync/changes')) {
+        if (r.queryParameters['cursor'] == '3') {
+          return FakeReply.json(410, problem('cursor_expired', 410));
+        }
+        return FakeReply.json(
+            200, {'changes': [], 'next_cursor': '50', 'has_more': false});
+      }
+      if (r.queryParameters['page_token'] == null) {
+        return FakeReply.json(200, {
+          'cursor': '50',
+          'assets': [assetJson('kept', seq: 2), assetJson('new', seq: 40)],
+          'next_page_token': 'p2',
+          'has_more': true,
+        });
+      }
+      if (failSecondPage) {
+        return FakeReply.json(503, problem('unavailable', 503));
+      }
+      return FakeReply.json(200, {
+        'assets': [assetJson('new2', seq: 41)],
+        'has_more': false,
+      });
+    });
+
+    // Interrupted: nothing is wiped, the old rows stay visible meanwhile.
+    await expectLater(build(fake).syncOnce(), throwsA(isA<DioException>()));
+    expect(await dao.byId('old'), isNotNull);
+    expect(await dao.byId('kept'), isNotNull);
+    expect(await dao.byId('new'), isNotNull);
+    expect(await dao.cursor(), isNull);
+
+    // After a restart the snapshot runs again and sweeps what it never listed.
+    failSecondPage = false;
+    await build(fake).syncOnce();
+    expect(await dao.byId('old'), isNull);
+    for (final id in ['kept', 'new', 'new2']) {
+      expect(await dao.byId(id), isNotNull, reason: id);
+    }
+    expect(await dao.cursor(), '50');
+  });
+
+  test('an interrupted first snapshot leaves no stale rows after a restart',
+      () async {
+    var run = 0;
+    final fake = FakeAdapter((r) {
+      if (r.path.endsWith('/sync/changes')) {
+        return FakeReply.json(
+            200, {'changes': [], 'next_cursor': '9', 'has_more': false});
+      }
+      if (run == 0) {
+        if (r.queryParameters['page_token'] == null) {
+          return FakeReply.json(200, {
+            'cursor': '9',
+            'assets': [assetJson('gone', seq: 1), assetJson('a2', seq: 2)],
+            'next_page_token': 'p2',
+            'has_more': true,
+          });
+        }
+        throw DioException.connectionError(
+            requestOptions: r, reason: 'connection reset');
+      }
+      // Meanwhile `gone` was purged on the server.
+      return FakeReply.json(200, {
+        'cursor': '9',
+        'assets': [assetJson('a2', seq: 2), assetJson('a3', seq: 3)],
+        'has_more': false,
+      });
+    });
+    await expectLater(build(fake).syncOnce(), throwsA(isA<DioException>()));
+    expect(await dao.byId('gone'), isNotNull);
+
+    run = 1;
+    await build(fake).syncOnce();
+    expect(await dao.byId('gone'), isNull);
+    expect(await dao.total(), 2);
+    expect(await dao.cursor(), '9');
   });
 
   test('staleUpsertIgnored', () async {

@@ -66,21 +66,26 @@ class FakeDao implements ServerAssetsDao {
   FakeDao(this.assets);
   final List<ServerAsset> assets;
 
-  @override
-  Stream<List<ServerAsset>> watchMonth(int year, int month) => Stream.value([
-    for (final a in assets)
-      if (a.year == year && a.month == month) a,
-  ]);
+  /// Every month a [watchMonth] was opened for.
+  final monthWatches = <MonthKey>[];
 
   @override
-  Stream<List<MonthCount>> monthsWithCounts() {
-    final counts = <(int, int), int>{};
-    for (final a in assets) {
-      counts.update((a.year, a.month), (n) => n + 1, ifAbsent: () => 1);
-    }
+  Stream<List<ServerAsset>> watchMonth(MonthKey month) {
+    monthWatches.add(month);
     return Stream.value([
-      for (final e in counts.entries) MonthCount(e.key.$1, e.key.$2, e.value),
+      for (final a in assets)
+        if (MonthKey.of(a.sortAt) == month) a,
     ]);
+  }
+
+  @override
+  Stream<Map<MonthKey, int>> watchMonthCounts() {
+    final counts = <MonthKey, int>{};
+    for (final a in assets) {
+      if (a.state != 'active') continue;
+      counts.update(MonthKey.of(a.sortAt), (n) => n + 1, ifAbsent: () => 1);
+    }
+    return Stream.value(counts);
   }
 
   @override
@@ -152,6 +157,8 @@ Future<ProviderContainer> pumpTimeline(
   List<ServerAsset> assets = const [],
   TimelineActions? actions,
   ThumbCache? cache,
+  FakeDao? dao,
+  Future<void> Function()? refresh,
   Size size = const Size(390, 844),
 }) async {
   t.view.physicalSize = size * 2;
@@ -172,10 +179,11 @@ Future<ProviderContainer> pumpTimeline(
   final container = ProviderContainer(
     overrides: [
       engineProvider.overrideWithValue(engine),
-      serverAssetsDaoProvider.overrideWithValue(FakeDao(assets)),
+      serverAssetsDaoProvider.overrideWithValue(dao ?? FakeDao(assets)),
       clockProvider.overrideWithValue(() => now),
       thumbCacheProvider.overrideWithValue(cache ?? FakeThumbCache(tinyPng)),
       if (actions != null) timelineActionsProvider.overrideWithValue(actions),
+      if (refresh != null) timelineRefreshProvider.overrideWithValue(refresh),
     ],
   );
   addTearDown(container.dispose);

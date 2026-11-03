@@ -117,7 +117,19 @@ class FakeEngine implements Engine {
     allAlbums: true,
     albumIds: [],
   );
-  List<PhoneItem> phoneItems = [];
+  List<PhoneItem> _phoneItems = [];
+  List<PhoneItem>? _sorted;
+
+  /// The phone index, served in the engine's paging order (taken time, then
+  /// localId, both descending).
+  List<PhoneItem> get phoneItems => _phoneItems;
+  set phoneItems(List<PhoneItem> items) {
+    _phoneItems = items;
+    _sorted = null;
+  }
+
+  /// Every [listPhoneItems] call, for tests that bound the work.
+  final pageRequests = <PageRequest>[];
   List<AttentionItem> attention = [];
   List<ActivityEntry> activity = [];
 
@@ -139,8 +151,46 @@ class FakeEngine implements Engine {
   Future<EngineSettings> getSettings() async => settings;
 
   @override
-  Future<PhoneItemPage> listPhoneItems(PageRequest req) async =>
-      PhoneItemPage(items: phoneItems);
+  Future<PhoneItemPage> listPhoneItems(PageRequest req) async {
+    pageRequests.add(req);
+    final items = _sorted ??= [..._phoneItems]
+      ..sort((a, b) {
+        final t = b.takenAtMs.compareTo(a.takenAtMs);
+        return t != 0 ? t : b.localId.compareTo(a.localId);
+      });
+    var start = 0;
+    final key = req.afterKey;
+    if (key != null) {
+      final bar = key.indexOf('|');
+      final ms = int.parse(key.substring(0, bar));
+      final id = key.substring(bar + 1);
+      // First item strictly after the key in the paging order.
+      var lo = 0, hi = items.length;
+      while (lo < hi) {
+        final mid = (lo + hi) ~/ 2;
+        final it = items[mid];
+        final after =
+            it.takenAtMs < ms ||
+            (it.takenAtMs == ms && it.localId.compareTo(id) < 0);
+        if (after) {
+          hi = mid;
+        } else {
+          lo = mid + 1;
+        }
+      }
+      start = lo;
+    }
+    final end = start + req.limit < items.length
+        ? start + req.limit
+        : items.length;
+    final last = end > start ? items[end - 1] : null;
+    return PhoneItemPage(
+      items: items.sublist(start, end),
+      nextKey: end < items.length && last != null
+          ? '${last.takenAtMs}|${last.localId}'
+          : null,
+    );
+  }
 
   @override
   Future<Uint8List> phoneThumbnail(String localId, int sizePx) async =>

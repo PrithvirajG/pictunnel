@@ -39,7 +39,9 @@ class MirrorSync {
       await _feed(cursor);
     } on DioException catch (e) {
       if (!_needsSnapshot(e)) rethrow;
-      await _dao.clear();
+      // Re-snapshot over the rows already here (they stay visible), then
+      // drop the ones the snapshot no longer lists. Without a cursor, a
+      // restart mid-snapshot snapshots again and sweeps the same way.
       await _dao.clearCursor();
       await _snapshot();
     }
@@ -53,7 +55,11 @@ class MirrorSync {
     return d.action == 'run_snapshot' || r.statusCode == 410;
   }
 
+  /// Pages the whole snapshot, marking every listed row with this
+  /// snapshot's generation; once complete, rows it did not list are removed
+  /// and the cursor is stored in the same transaction.
   Future<void> _snapshot() async {
+    final gen = await _dao.beginSnapshot();
     String? pageToken;
     String? cursor;
     while (true) {
@@ -66,6 +72,7 @@ class MirrorSync {
         for (final a in page.assets) {
           if (await _dao.upsert(a)) changed++;
         }
+        await _dao.markSeen(page.assets.map((a) => a.id), gen);
       });
       if (changed > 0) _changes.add(changed);
       pageToken = page.nextPageToken;
@@ -74,8 +81,14 @@ class MirrorSync {
     if (cursor == null) {
       throw StateError('snapshot returned no cursor');
     }
-    await _dao.setCursor(cursor);
-    await _feed(cursor);
+    final done = cursor;
+    var removed = 0;
+    await db.transaction(() async {
+      removed = await _dao.removeUnseen(gen);
+      await _dao.setCursor(done);
+    });
+    if (removed > 0) _changes.add(removed);
+    await _feed(done);
   }
 
   Future<void> _feed(String start) async {

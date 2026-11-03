@@ -9,6 +9,7 @@ import '../../core/engine/engine.dart';
 import '../timeline/selection.dart';
 import '../timeline/tile.dart';
 import '../timeline/timeline_model.dart';
+import '../timeline/timeline_providers.dart';
 import 'info_panel.dart';
 import 'live_photo.dart';
 import 'photo_page.dart';
@@ -41,11 +42,33 @@ class _ViewerScreenState extends ConsumerState<ViewerScreen> {
   late String _key = widget.assetKey;
   PageController? _pages;
   bool _busy = false;
+  late final TimelineWindow _window;
+  MonthKey? _windowFor;
+
+  @override
+  void initState() {
+    super.initState();
+    _window = ref.read(timelineWindowProvider.notifier);
+  }
 
   @override
   void dispose() {
     _pages?.dispose();
     super.dispose();
+  }
+
+  /// Keeps the open item's month and its neighbours loaded, so paging can
+  /// cross into the next month.
+  void _keepMonthsLoaded(TimelineItem item) {
+    final month = MonthKey.of(item.takenAt);
+    if (month == _windowFor) return;
+    final months = ref.read(timelineMonthsProvider).value;
+    if (months == null) return;
+    _windowFor = month;
+    final want = neighbourMonths(months, month);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _window.request(viewerOwner, want);
+    });
   }
 
   TimelineItem? _current(List<TimelineItem> items) {
@@ -118,6 +141,7 @@ class _ViewerScreenState extends ConsumerState<ViewerScreen> {
       });
       return const Scaffold(backgroundColor: viewerGround);
     }
+    _keepMonthsLoaded(current);
     final index = items.indexOf(current);
     _pages ??= PageController(initialPage: index);
     _syncPage(items);

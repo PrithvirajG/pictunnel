@@ -157,6 +157,17 @@ class $ServerAssetsTable extends ServerAssets
     type: DriftSqlType.int,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _snapshotGenMeta = const VerificationMeta(
+    'snapshotGen',
+  );
+  @override
+  late final GeneratedColumn<int> snapshotGen = GeneratedColumn<int>(
+    'snapshot_gen',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -174,6 +185,7 @@ class $ServerAssetsTable extends ServerAssets
     state,
     thumbnailsReady,
     updatedSeq,
+    snapshotGen,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -301,6 +313,15 @@ class $ServerAssetsTable extends ServerAssets
     } else if (isInserting) {
       context.missing(_updatedSeqMeta);
     }
+    if (data.containsKey('snapshot_gen')) {
+      context.handle(
+        _snapshotGenMeta,
+        snapshotGen.isAcceptableOrUnknown(
+          data['snapshot_gen']!,
+          _snapshotGenMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -370,6 +391,10 @@ class $ServerAssetsTable extends ServerAssets
         DriftSqlType.int,
         data['${effectivePrefix}updated_seq'],
       )!,
+      snapshotGen: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}snapshot_gen'],
+      ),
     );
   }
 
@@ -395,6 +420,10 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
   final String state;
   final bool thumbnailsReady;
   final int updatedSeq;
+
+  /// The snapshot generation that last listed this row; rows a completed
+  /// snapshot did not list are removed (sync-protocol §7.6 resync).
+  final int? snapshotGen;
   const ServerAsset({
     required this.id,
     required this.sha256,
@@ -411,6 +440,7 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
     required this.state,
     required this.thumbnailsReady,
     required this.updatedSeq,
+    this.snapshotGen,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -436,6 +466,9 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
     map['state'] = Variable<String>(state);
     map['thumbnails_ready'] = Variable<bool>(thumbnailsReady);
     map['updated_seq'] = Variable<int>(updatedSeq);
+    if (!nullToAbsent || snapshotGen != null) {
+      map['snapshot_gen'] = Variable<int>(snapshotGen);
+    }
     return map;
   }
 
@@ -462,6 +495,9 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
       state: Value(state),
       thumbnailsReady: Value(thumbnailsReady),
       updatedSeq: Value(updatedSeq),
+      snapshotGen: snapshotGen == null && nullToAbsent
+          ? const Value.absent()
+          : Value(snapshotGen),
     );
   }
 
@@ -486,6 +522,7 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
       state: serializer.fromJson<String>(json['state']),
       thumbnailsReady: serializer.fromJson<bool>(json['thumbnailsReady']),
       updatedSeq: serializer.fromJson<int>(json['updatedSeq']),
+      snapshotGen: serializer.fromJson<int?>(json['snapshotGen']),
     );
   }
   @override
@@ -507,6 +544,7 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
       'state': serializer.toJson<String>(state),
       'thumbnailsReady': serializer.toJson<bool>(thumbnailsReady),
       'updatedSeq': serializer.toJson<int>(updatedSeq),
+      'snapshotGen': serializer.toJson<int?>(snapshotGen),
     };
   }
 
@@ -526,6 +564,7 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
     String? state,
     bool? thumbnailsReady,
     int? updatedSeq,
+    Value<int?> snapshotGen = const Value.absent(),
   }) => ServerAsset(
     id: id ?? this.id,
     sha256: sha256 ?? this.sha256,
@@ -542,6 +581,7 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
     state: state ?? this.state,
     thumbnailsReady: thumbnailsReady ?? this.thumbnailsReady,
     updatedSeq: updatedSeq ?? this.updatedSeq,
+    snapshotGen: snapshotGen.present ? snapshotGen.value : this.snapshotGen,
   );
   ServerAsset copyWithCompanion(ServerAssetsCompanion data) {
     return ServerAsset(
@@ -566,6 +606,9 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
       updatedSeq: data.updatedSeq.present
           ? data.updatedSeq.value
           : this.updatedSeq,
+      snapshotGen: data.snapshotGen.present
+          ? data.snapshotGen.value
+          : this.snapshotGen,
     );
   }
 
@@ -586,7 +629,8 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
           ..write('durationMs: $durationMs, ')
           ..write('state: $state, ')
           ..write('thumbnailsReady: $thumbnailsReady, ')
-          ..write('updatedSeq: $updatedSeq')
+          ..write('updatedSeq: $updatedSeq, ')
+          ..write('snapshotGen: $snapshotGen')
           ..write(')'))
         .toString();
   }
@@ -608,6 +652,7 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
     state,
     thumbnailsReady,
     updatedSeq,
+    snapshotGen,
   );
   @override
   bool operator ==(Object other) =>
@@ -627,7 +672,8 @@ class ServerAsset extends DataClass implements Insertable<ServerAsset> {
           other.durationMs == this.durationMs &&
           other.state == this.state &&
           other.thumbnailsReady == this.thumbnailsReady &&
-          other.updatedSeq == this.updatedSeq);
+          other.updatedSeq == this.updatedSeq &&
+          other.snapshotGen == this.snapshotGen);
 }
 
 class ServerAssetsCompanion extends UpdateCompanion<ServerAsset> {
@@ -646,6 +692,7 @@ class ServerAssetsCompanion extends UpdateCompanion<ServerAsset> {
   final Value<String> state;
   final Value<bool> thumbnailsReady;
   final Value<int> updatedSeq;
+  final Value<int?> snapshotGen;
   final Value<int> rowid;
   const ServerAssetsCompanion({
     this.id = const Value.absent(),
@@ -663,6 +710,7 @@ class ServerAssetsCompanion extends UpdateCompanion<ServerAsset> {
     this.state = const Value.absent(),
     this.thumbnailsReady = const Value.absent(),
     this.updatedSeq = const Value.absent(),
+    this.snapshotGen = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   ServerAssetsCompanion.insert({
@@ -681,6 +729,7 @@ class ServerAssetsCompanion extends UpdateCompanion<ServerAsset> {
     required String state,
     required bool thumbnailsReady,
     required int updatedSeq,
+    this.snapshotGen = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        sha256 = Value(sha256),
@@ -710,6 +759,7 @@ class ServerAssetsCompanion extends UpdateCompanion<ServerAsset> {
     Expression<String>? state,
     Expression<bool>? thumbnailsReady,
     Expression<int>? updatedSeq,
+    Expression<int>? snapshotGen,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -728,6 +778,7 @@ class ServerAssetsCompanion extends UpdateCompanion<ServerAsset> {
       if (state != null) 'state': state,
       if (thumbnailsReady != null) 'thumbnails_ready': thumbnailsReady,
       if (updatedSeq != null) 'updated_seq': updatedSeq,
+      if (snapshotGen != null) 'snapshot_gen': snapshotGen,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -748,6 +799,7 @@ class ServerAssetsCompanion extends UpdateCompanion<ServerAsset> {
     Value<String>? state,
     Value<bool>? thumbnailsReady,
     Value<int>? updatedSeq,
+    Value<int?>? snapshotGen,
     Value<int>? rowid,
   }) {
     return ServerAssetsCompanion(
@@ -766,6 +818,7 @@ class ServerAssetsCompanion extends UpdateCompanion<ServerAsset> {
       state: state ?? this.state,
       thumbnailsReady: thumbnailsReady ?? this.thumbnailsReady,
       updatedSeq: updatedSeq ?? this.updatedSeq,
+      snapshotGen: snapshotGen ?? this.snapshotGen,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -818,6 +871,9 @@ class ServerAssetsCompanion extends UpdateCompanion<ServerAsset> {
     if (updatedSeq.present) {
       map['updated_seq'] = Variable<int>(updatedSeq.value);
     }
+    if (snapshotGen.present) {
+      map['snapshot_gen'] = Variable<int>(snapshotGen.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -842,6 +898,7 @@ class ServerAssetsCompanion extends UpdateCompanion<ServerAsset> {
           ..write('state: $state, ')
           ..write('thumbnailsReady: $thumbnailsReady, ')
           ..write('updatedSeq: $updatedSeq, ')
+          ..write('snapshotGen: $snapshotGen, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1428,6 +1485,10 @@ abstract class _$AppDb extends GeneratedDatabase {
   late final $ServerAssetsTable serverAssets = $ServerAssetsTable(this);
   late final $SyncMetaTable syncMeta = $SyncMetaTable(this);
   late final $ThumbEntriesTable thumbEntries = $ThumbEntriesTable(this);
+  late final Index serverAssetsSortAt = Index(
+    'server_assets_sort_at',
+    'CREATE INDEX server_assets_sort_at ON server_assets (sort_at)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -1436,6 +1497,7 @@ abstract class _$AppDb extends GeneratedDatabase {
     serverAssets,
     syncMeta,
     thumbEntries,
+    serverAssetsSortAt,
   ];
 }
 
@@ -1456,6 +1518,7 @@ typedef $$ServerAssetsTableCreateCompanionBuilder =
       required String state,
       required bool thumbnailsReady,
       required int updatedSeq,
+      Value<int?> snapshotGen,
       Value<int> rowid,
     });
 typedef $$ServerAssetsTableUpdateCompanionBuilder =
@@ -1475,6 +1538,7 @@ typedef $$ServerAssetsTableUpdateCompanionBuilder =
       Value<String> state,
       Value<bool> thumbnailsReady,
       Value<int> updatedSeq,
+      Value<int?> snapshotGen,
       Value<int> rowid,
     });
 
@@ -1559,6 +1623,11 @@ class $$ServerAssetsTableFilterComposer
 
   ColumnFilters<int> get updatedSeq => $composableBuilder(
     column: $table.updatedSeq,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get snapshotGen => $composableBuilder(
+    column: $table.snapshotGen,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1646,6 +1715,11 @@ class $$ServerAssetsTableOrderingComposer
     column: $table.updatedSeq,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<int> get snapshotGen => $composableBuilder(
+    column: $table.snapshotGen,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$ServerAssetsTableAnnotationComposer
@@ -1707,6 +1781,11 @@ class $$ServerAssetsTableAnnotationComposer
     column: $table.updatedSeq,
     builder: (column) => column,
   );
+
+  GeneratedColumn<int> get snapshotGen => $composableBuilder(
+    column: $table.snapshotGen,
+    builder: (column) => column,
+  );
 }
 
 class $$ServerAssetsTableTableManager
@@ -1755,6 +1834,7 @@ class $$ServerAssetsTableTableManager
                 Value<String> state = const Value.absent(),
                 Value<bool> thumbnailsReady = const Value.absent(),
                 Value<int> updatedSeq = const Value.absent(),
+                Value<int?> snapshotGen = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => ServerAssetsCompanion(
                 id: id,
@@ -1772,6 +1852,7 @@ class $$ServerAssetsTableTableManager
                 state: state,
                 thumbnailsReady: thumbnailsReady,
                 updatedSeq: updatedSeq,
+                snapshotGen: snapshotGen,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -1791,6 +1872,7 @@ class $$ServerAssetsTableTableManager
                 required String state,
                 required bool thumbnailsReady,
                 required int updatedSeq,
+                Value<int?> snapshotGen = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => ServerAssetsCompanion.insert(
                 id: id,
@@ -1808,6 +1890,7 @@ class $$ServerAssetsTableTableManager
                 state: state,
                 thumbnailsReady: thumbnailsReady,
                 updatedSeq: updatedSeq,
+                snapshotGen: snapshotGen,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

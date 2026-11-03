@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pictunnel/app/app.dart';
 import 'package:pictunnel/app/router.dart';
-import 'package:pictunnel/features/timeline/timeline_model.dart';
 import 'package:pictunnel/features/timeline/timeline_providers.dart';
 
 void main() {
@@ -15,7 +14,7 @@ void main() {
       ProviderScope(
         overrides: [
       serverConnectedProvider.overrideWith((_) async => true),
-      timelineMonthsProvider.overrideWith((_) => Stream.value(<MonthKey>[])),
+      timelineMonthsProvider.overrideWithValue(const AsyncData(<MonthSummary>[])),
     ],
         child: const PicTunnelApp(),
       ),

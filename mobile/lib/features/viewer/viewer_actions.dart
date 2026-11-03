@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../core/engine/engine.dart';
 import '../../core/engine/error_copy.dart';
+import '../../core/files/safe_name.dart';
 import '../timeline/selection.dart';
 import '../timeline/timeline_model.dart';
 import '../timeline/timeline_providers.dart';
@@ -77,9 +78,38 @@ abstract interface class ShareService {
   Future<void> shareOriginal(String assetId, String filename, String mime);
 }
 
+/// Streams a server original to [savePath] without holding it in memory.
+typedef OriginalDownloader =
+    Future<void> Function(String assetId, String savePath);
+
+/// Wired by the composition root to the pinned API client.
+final originalDownloaderProvider = Provider<OriginalDownloader>(
+  (ref) => throw UnimplementedError('override originalDownloaderProvider'),
+);
+
+/// Folder under the temp dir that holds one subfolder per share.
+const shareFolderName = 'pt_share';
+
+/// Shares a server original: it is streamed into its own folder under
+/// `<temp>/pt_share/`, under a sanitised name, and the folder is deleted once
+/// the share sheet is done (or failed). [sweepShareFolders] removes what an
+/// interrupted share left behind.
 class PlusShareService implements ShareService {
-  PlusShareService(this._ref);
+  PlusShareService(
+    this._ref, {
+    Future<Directory> Function()? tempDir,
+    Future<void> Function(XFile file)? share,
+  }) : _tempDir = tempDir ?? getTemporaryDirectory,
+       _share = share ?? _systemShare;
+
   final Ref _ref;
+  final Future<Directory> Function() _tempDir;
+  final Future<void> Function(XFile file) _share;
+  static var _seq = 0;
+
+  static Future<void> _systemShare(XFile file) async {
+    await SharePlus.instance.share(ShareParams(files: [file]));
+  }
 
   @override
   Future<void> shareOriginal(
@@ -87,17 +117,40 @@ class PlusShareService implements ShareService {
     String filename,
     String mime,
   ) async {
-    final res = await _ref
-        .read(assetsApiProvider)
-        .getAssetOriginal(assetId: assetId);
-    final bytes = res.data;
-    if (bytes == null) throw const ViewerActionException('Could not load it');
-    final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}${Platform.pathSeparator}$filename');
-    await file.writeAsBytes(bytes, flush: true);
-    await SharePlus.instance.share(
-      ShareParams(files: [XFile(file.path, mimeType: mime)]),
+    final sep = Platform.pathSeparator;
+    final root = Directory('${(await _tempDir()).path}$sep$shareFolderName');
+    final dir = Directory(
+      '${root.path}$sep${DateTime.now().microsecondsSinceEpoch}-${_seq++}',
     );
+    await dir.create(recursive: true);
+    try {
+      final file = File(
+        '${dir.path}$sep${sanitizeFileName(filename, fallback: 'photo')}',
+      );
+      await _ref.read(originalDownloaderProvider)(assetId, file.path);
+      if (!file.existsSync()) {
+        throw const ViewerActionException('Could not load it');
+      }
+      await _share(XFile(file.path, mimeType: mime));
+    } finally {
+      try {
+        await dir.delete(recursive: true);
+      } on FileSystemException {
+        // swept at the next start
+      }
+    }
+  }
+}
+
+/// Deletes every share folder (run at start, when no share is in progress).
+Future<void> sweepShareFolders(Directory temp) async {
+  final root = Directory(
+    '${temp.path}${Platform.pathSeparator}$shareFolderName',
+  );
+  try {
+    if (root.existsSync()) await root.delete(recursive: true);
+  } on FileSystemException {
+    // try again next start
   }
 }
 
@@ -172,11 +225,14 @@ class ServerTimelineActions implements TimelineActions {
   }
 }
 
-/// The merged, flat, newest-first list of every timeline item, in the order
-/// the viewer pages through.
-final viewerItemsProvider = Provider<AsyncValue<List<TimelineItem>>>((ref) {
+/// The merged, flat, newest-first list of the loaded timeline items, in the
+/// order the grid shows them and the viewer pages through. The viewer keeps
+/// the months around the open item loaded (see [timelineWindowProvider]).
+final viewerItemsProvider = Provider.autoDispose<AsyncValue<List<TimelineItem>>>((
+  ref,
+) {
   final data = ref.watch(timelineSectionsProvider);
-  return data.whenData((d) => [for (final s in d.sections) ...s.items]);
+  return data.whenData((d) => displayOrder(d.sections));
 });
 
 /// Full metadata (location, time zone offset) of a server asset.

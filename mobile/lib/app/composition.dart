@@ -28,6 +28,7 @@ import '../core/sync/sync_driver.dart';
 import '../core/thumbs/thumb_image.dart';
 import '../features/pairing/pairing_controller.dart';
 import '../features/settings/about_screen.dart';
+import '../features/settings/battery_hint.dart';
 import '../features/settings/server_section.dart';
 import '../features/timeline/selection.dart';
 import '../features/timeline/timeline_providers.dart';
@@ -173,6 +174,21 @@ Future<void> wipeLocalData(AppDb db, Directory thumbDir) async {
   }
 }
 
+/// Dismissed hints, kept in the app database's meta table.
+class DbHintStore implements HintStore {
+  DbHintStore(this._db);
+  final AppDb _db;
+
+  static String _key(String hint) => 'hint_dismissed:$hint';
+
+  @override
+  Future<bool> isDismissed(String hint) async =>
+      await _db.getMeta(_key(hint)) != null;
+
+  @override
+  Future<void> dismiss(String hint) => _db.setMeta(_key(hint), '1');
+}
+
 /// Every override the running app needs.
 List<Override> appOverrides(AppEnvironment env) => [
   engineProvider.overrideWith((ref) {
@@ -214,6 +230,13 @@ List<Override> appOverrides(AppEnvironment env) => [
     (ref) => EngineViewerHost(ref.watch(engineProvider)),
   ),
   shareServiceProvider.overrideWith(PlusShareService.new),
+  originalDownloaderProvider.overrideWith((ref) {
+    final dio = ref.watch(apiClientProvider).dio;
+    return (assetId, savePath) => dio.download(
+      '/api/v1/assets/${Uri.encodeComponent(assetId)}/original',
+      savePath,
+    );
+  }),
   playbackSourceProvider.overrideWith(
     (ref) => ProxyPlaybackSource(
       ref.watch(serverEndpointProvider),
@@ -258,6 +281,14 @@ List<Override> appOverrides(AppEnvironment env) => [
       return null;
     }
   }),
+  timelineRefreshProvider.overrideWith(
+    (ref) => () async {
+      final mirror = ref.read(mirrorSyncProvider).syncOnce();
+      await refreshPhoneSide(ref);
+      await mirror;
+    },
+  ),
+  hintStoreProvider.overrideWith((ref) => DbHintStore(ref.watch(appDbProvider))),
   backgroundSyncProvider.overrideWith((ref) {
     final connected = ref.watch(
       serverConnectedProvider.select((v) => v.value ?? false),

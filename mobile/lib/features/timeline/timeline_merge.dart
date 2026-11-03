@@ -91,7 +91,7 @@ List<TimelineItem> mergeItems(List<ServerAsset> server, List<PhoneItem> phone) {
             phone: p,
             takenAt: _phoneTime(p),
             isVideo: s.kind == 'video' || p.mime.startsWith('video/'),
-            isLive: p.isLivePhoto,
+            isLive: p.isLivePhoto || s.kind == 'live_photo',
             phoneState: p.state,
           ));
   }
@@ -120,5 +120,5 @@ TimelineItem _serverOnly(ServerAsset s, String key) => TimelineItem(
       server: s,
       takenAt: s.sortAt.toUtc(),
       isVideo: s.kind == 'video',
-      isLive: false,
+      isLive: s.kind == 'live_photo',
     );

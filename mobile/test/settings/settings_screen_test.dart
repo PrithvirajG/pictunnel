@@ -13,7 +13,6 @@ import 'package:pictunnel/features/pairing/pairing_controller.dart';
 import 'package:pictunnel/features/settings/about_screen.dart';
 import 'package:pictunnel/features/settings/album_picker.dart';
 import 'package:pictunnel/features/settings/settings_screen.dart';
-import 'package:pictunnel/features/timeline/timeline_model.dart';
 import 'package:pictunnel/features/timeline/timeline_providers.dart';
 
 const gb = 1 << 30;
@@ -320,8 +319,8 @@ void main() {
         overrides: [
           engineProvider.overrideWithValue(e),
           serverConnectedProvider.overrideWith((_) async => true),
-          timelineMonthsProvider.overrideWith(
-            (_) => Stream.value(<MonthKey>[]),
+          timelineMonthsProvider.overrideWithValue(
+            const AsyncData(<MonthSummary>[]),
           ),
           deviceNameProvider.overrideWithValue('Pixel 9'),
         ],

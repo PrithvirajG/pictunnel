@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pictunnel/app/app.dart';
 import 'package:pictunnel/app/router.dart';
-import 'package:pictunnel/features/timeline/timeline_model.dart';
 import 'package:pictunnel/features/timeline/timeline_providers.dart';
 import 'package:pictunnel/app/theme/tokens.dart';
 import 'package:pictunnel/core/engine/engine.dart';
@@ -16,7 +15,7 @@ Future<ProviderContainer> pump(
   final container = ProviderContainer(
     overrides: [
       serverConnectedProvider.overrideWith((_) async => connected),
-      timelineMonthsProvider.overrideWith((_) => Stream.value(<MonthKey>[])),
+      timelineMonthsProvider.overrideWithValue(const AsyncData(<MonthSummary>[])),
     ],
   );
   addTearDown(container.dispose);
@@ -88,7 +87,7 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         serverConnectedProvider.overrideWith((_) async => true),
-        timelineMonthsProvider.overrideWith((_) => Stream.value(<MonthKey>[])),
+        timelineMonthsProvider.overrideWithValue(const AsyncData(<MonthSummary>[])),
         engineProvider.overrideWithValue(engine),
       ],
     );

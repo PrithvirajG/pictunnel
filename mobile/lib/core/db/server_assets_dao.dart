@@ -1,28 +1,8 @@
 import 'package:drift/drift.dart';
 import 'package:pictunnel_api/pictunnel_api.dart' as api;
 
+import '../time/month_key.dart';
 import 'app_db.dart';
-
-class MonthCount {
-  const MonthCount(this.year, this.month, this.count);
-
-  final int year;
-  final int month;
-  final int count;
-
-  @override
-  bool operator ==(Object other) =>
-      other is MonthCount &&
-      other.year == year &&
-      other.month == month &&
-      other.count == count;
-
-  @override
-  int get hashCode => Object.hash(year, month, count);
-
-  @override
-  String toString() => 'MonthCount($year-$month: $count)';
-}
 
 class ServerAssetsDao {
   ServerAssetsDao(this._db);
@@ -31,10 +11,17 @@ class ServerAssetsDao {
 
   static const _cursorKey = 'sync_cursor';
 
-  /// Assets captured in the given month, newest first.
-  Stream<List<ServerAsset>> watchMonth(int year, int month) {
+  static const _snapshotGenKey = 'snapshot_gen';
+
+  /// Assets captured in [month] (by `sortAt`, in the phone's zone, as the
+  /// phone index is bucketed), newest first.
+  Stream<List<ServerAsset>> watchMonth(MonthKey month) {
     final q = _db.select(_db.serverAssets)
-      ..where((t) => t.year.equals(year) & t.month.equals(month))
+      ..where(
+        (t) =>
+            t.sortAt.isBiggerOrEqualValue(month.start) &
+            t.sortAt.isSmallerThanValue(month.end),
+      )
       ..orderBy([
         (t) => OrderingTerm.desc(t.sortAt),
         (t) => OrderingTerm.asc(t.id),
@@ -42,21 +29,27 @@ class ServerAssetsDao {
     return q.watch();
   }
 
-  /// Months that have assets, newest first, with their asset counts.
-  Stream<List<MonthCount>> monthsWithCounts() {
-    final count = _db.serverAssets.id.count();
-    final q = _db.selectOnly(_db.serverAssets)
-      ..addColumns([_db.serverAssets.year, _db.serverAssets.month, count])
-      ..groupBy([_db.serverAssets.year, _db.serverAssets.month])
-      ..orderBy([
-        OrderingTerm.desc(_db.serverAssets.year),
-        OrderingTerm.desc(_db.serverAssets.month),
-      ]);
-    return q.watch().map((rows) => [
-          for (final r in rows)
-            MonthCount(r.read(_db.serverAssets.year)!,
-                r.read(_db.serverAssets.month)!, r.read(count)!),
-        ]);
+  /// Active assets per month (by `sortAt` in the phone's zone).
+  ///
+  /// Every zone offset is a whole number of quarter hours, so a local month
+  /// boundary always falls on a quarter hour in UTC: counting per 15-minute
+  /// bucket in SQL and folding the buckets into [MonthKey]s in Dart is exact
+  /// and needs no row reads.
+  Stream<Map<MonthKey, int>> watchMonthCounts() {
+    const q =
+        'SELECT sort_at - (((sort_at % 900) + 900) % 900) AS b, COUNT(*) AS n '
+        "FROM server_assets WHERE state = 'active' GROUP BY b";
+    return _db
+        .customSelect(q, readsFrom: {_db.serverAssets})
+        .watch()
+        .map((rows) {
+          final out = <MonthKey, int>{};
+          for (final r in rows) {
+            final m = MonthKey.ofMs(r.read<int>('b') * 1000);
+            out[m] = (out[m] ?? 0) + r.read<int>('n');
+          }
+          return out;
+        });
   }
 
   /// Trashed assets, most recently captured first.
@@ -112,6 +105,24 @@ class ServerAssetsDao {
       0;
 
   Future<void> clear() => _db.delete(_db.serverAssets).go();
+
+  /// Starts a snapshot: the generation its pages mark rows with.
+  Future<int> beginSnapshot() async {
+    final gen = int.tryParse(await _db.getMeta(_snapshotGenKey) ?? '') ?? 0;
+    await _db.setMeta(_snapshotGenKey, '${gen + 1}');
+    return gen + 1;
+  }
+
+  /// Marks [ids] as listed by snapshot [gen].
+  Future<void> markSeen(Iterable<String> ids, int gen) =>
+      (_db.update(_db.serverAssets)..where((t) => t.id.isIn(ids.toList())))
+          .write(ServerAssetsCompanion(snapshotGen: Value(gen)));
+
+  /// After snapshot [gen] completed: removes every row it did not list.
+  /// Returns how many went.
+  Future<int> removeUnseen(int gen) => (_db.delete(_db.serverAssets)
+        ..where((t) => t.snapshotGen.isNull() | t.snapshotGen.equals(gen).not()))
+      .go();
 
   Future<String?> cursor() => _db.getMeta(_cursorKey);
 

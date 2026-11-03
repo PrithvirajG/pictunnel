@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
+import '../../core/engine/error_copy.dart';
 import 'month_section.dart';
 import 'selection.dart';
 import 'selection_bar.dart';
@@ -13,7 +14,9 @@ import 'timeline_model.dart';
 import 'timeline_providers.dart';
 
 /// Photos tab: the unified timeline (M§7.1) as one lazy fixed-extent list of
-/// month headers and rows of square tiles.
+/// month headers and rows of square tiles. Every month has rows from its
+/// counts; only the months near the viewport are loaded (the rest show
+/// placeholder tiles), so a 100k library costs the same as a small one.
 class TimelineScreen extends ConsumerStatefulWidget {
   const TimelineScreen({super.key});
 
@@ -28,6 +31,54 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   bool _notOnPhoneOnly = false;
   final _pointers = <int, Offset>{};
   double? _baseline;
+  final _scroll = ScrollController();
+  late final TimelineWindow _window;
+
+  /// What each month held when it was last loaded, per filter mode, so a
+  /// month that scrolls away keeps its size instead of an estimate.
+  final _known = <bool, Map<MonthKey, int>>{false: {}, true: {}};
+
+  /// The last laid-out rows and the scroll offset where each one starts.
+  List<TimelineRow> _rows = const [];
+  List<double> _starts = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _window = ref.read(timelineWindowProvider.notifier);
+    _scroll.addListener(_updateWindow);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Asks for the months of the rows on screen, plus half a screen above and
+  /// two below; months outside it are released. Bounded work: a binary
+  /// search, then only the rows in that band.
+  void _updateWindow() {
+    if (!_scroll.hasClients || _rows.isEmpty) return;
+    final pos = _scroll.position;
+    final top = pos.pixels - pos.viewportDimension * 0.5;
+    final bottom = pos.pixels + pos.viewportDimension * 2;
+    var lo = 0, hi = _starts.length - 1;
+    while (lo < hi) {
+      final mid = (lo + hi + 1) ~/ 2;
+      if (_starts[mid] <= top) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    final months = <MonthKey>{};
+    for (var i = lo; i < _rows.length && _starts[i] <= bottom; i++) {
+      final m = _rows[i].month;
+      if (m != null) months.add(m);
+    }
+    _window.request(timelineOwner, months);
+  }
 
   double get _distance {
     final p = _pointers.values.toList();
@@ -59,15 +110,39 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     _baseline = null;
   }
 
+  /// Pull-to-refresh: mirror sync plus an engine run (M§7.1).
+  Future<void> _refresh() async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    try {
+      await ref.read(timelineRefreshProvider)();
+    } catch (e) {
+      messenger?.showSnackBar(SnackBar(content: Text(engineErrorMessage(e))));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final data = ref.watch(timelineSectionsProvider);
     final selection = ref.watch(selectionProvider);
-    final sections = data.value?.sections ?? const <TimelineSection>[];
+    final value = data.value;
+    final sections = value?.sections ?? const <TimelineSection>[];
+    final loaded = value?.loaded ?? const <MonthKey>{};
+    final known = _known[_notOnPhoneOnly]!;
     final display = buildDisplaySections(
       sections,
       notOnPhoneOnly: _notOnPhoneOnly,
+      months: value?.months ?? const [],
+      loaded: loaded,
+      knownCounts: known,
     );
+    // Remember loaded month sizes (a loaded month with nothing to show is 0).
+    for (final m in loaded) {
+      known[m] = 0;
+    }
+    for (final d in display) {
+      final m = d.month;
+      if (m != null && !d.isPlaceholder) known[m] = d.items.length;
+    }
     final controller = ref.read(selectionProvider.notifier);
 
     return SafeArea(
@@ -87,7 +162,13 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
               onPointerMove: _move,
               onPointerUp: _up,
               onPointerCancel: _up,
-              child: _body(data, display, selection),
+              child: RefreshIndicator(
+                key: const Key('timelineRefresh'),
+                color: Tokens.accent,
+                backgroundColor: Tokens.surface,
+                onRefresh: _refresh,
+                child: _body(data, display, selection),
+              ),
             ),
           ),
           if (selection.active)
@@ -103,33 +184,61 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     SelectionState selection,
   ) {
     if (display.isEmpty) {
+      _rows = const [];
+      _starts = const [];
+      String? text;
       if (data.isLoading || (data.value?.loading ?? false)) {
-        return const SizedBox.expand();
-      }
-      if (data.hasError && !data.hasValue) {
-        return const _Empty('Could not load your photos.');
-      }
-      return _Empty(
-        _notOnPhoneOnly
+        text = null;
+      } else if (data.hasError && !data.hasValue) {
+        text = 'Could not load your photos.';
+      } else {
+        text = _notOnPhoneOnly
             ? 'Everything on your server is on this phone.'
-            : 'No photos yet.',
+            : 'No photos yet.';
+      }
+      // Scrollable, so pull-to-refresh works on an empty timeline too.
+      return LayoutBuilder(
+        builder: (context, box) => ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(
+              height: box.maxHeight,
+              child: text == null ? null : _Empty(text),
+            ),
+          ],
+        ),
       );
     }
+    final headerExtent = timelineHeaderExtent(MediaQuery.textScalerOf(context));
     return LayoutBuilder(
       builder: (context, box) {
         final rows = layoutRows(display, _columns);
         final tile = (box.maxWidth - timelineGap * (_columns - 1)) / _columns;
         final rowExtent = tile + timelineGap;
+        final starts = List<double>.filled(rows.length, 0);
+        var y = 0.0;
+        for (var i = 0; i < rows.length; i++) {
+          starts[i] = y;
+          y += rows[i] is HeaderRow ? headerExtent : rowExtent;
+        }
+        _rows = rows;
+        _starts = starts;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _updateWindow();
+        });
         final controller = ref.read(selectionProvider.notifier);
         return ListView.builder(
           key: const Key('timelineList'),
+          controller: _scroll,
+          physics: const AlwaysScrollableScrollPhysics(),
           itemCount: rows.length,
           itemExtentBuilder: (i, _) =>
-              rows[i] is HeaderRow ? timelineHeaderHeight : rowExtent,
+              rows[i] is HeaderRow ? headerExtent : rowExtent,
           itemBuilder: (context, i) {
             final row = rows[i];
             return switch (row) {
               HeaderRow() => SectionHeader(row),
+              PlaceholderRow() => PlaceholderRowView(row: row, tileSize: tile),
               TilesRow() => TileRowView(
                 row: row,
                 tileSize: tile,

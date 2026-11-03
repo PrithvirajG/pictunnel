@@ -4,12 +4,14 @@ import 'dart:typed_data';
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pictunnel/app/app.dart';
 import 'package:pictunnel/app/composition.dart';
 import 'package:pictunnel/app/router.dart';
 import 'package:pictunnel/core/db/app_db.dart';
+import 'package:pictunnel/core/engine/engine.dart' show PigeonEngine, engineProvider;
 import 'package:pictunnel/core/engine/pigeon.g.dart';
 import 'package:pictunnel/core/thumbs/thumb_image.dart';
 import 'package:pictunnel/features/pairing/pairing_controller.dart';
@@ -65,9 +67,25 @@ class FakeHostApi extends EngineHostApi {
     albumIds: [],
   );
 
+  /// The phone index, served newest first in one page.
+  List<PhoneItem> items = [];
+
+  /// Like both engines: there is no index before pairing.
   @override
-  Future<PhoneItemPage> listPhoneItems(PageRequest req) async =>
-      PhoneItemPage(items: []);
+  Future<PhoneItemPage> listPhoneItems(PageRequest req) async {
+    if (connection == null) throw PlatformException(code: 'not_paired');
+    return PhoneItemPage(
+      items: [...items]..sort((a, b) => b.takenAtMs.compareTo(a.takenAtMs)),
+    );
+  }
+
+  var mediaAccessRequests = 0;
+
+  @override
+  Future<MediaAccess> requestMediaAccess() async {
+    mediaAccessRequests++;
+    return MediaAccess.full;
+  }
 
   @override
   Future<Uint8List> phoneThumbnail(String localId, int sizePx) async =>
@@ -145,10 +163,29 @@ Future<Booted> boot(WidgetTester t, {ServerConnection? connection}) async {
   return Booted(container, host, adapter);
 }
 
+PhoneItem phoneItem(String id, DateTime at) => PhoneItem(
+  localId: id,
+  filename: '$id.jpg',
+  takenAtMs: at.millisecondsSinceEpoch,
+  mime: 'image/jpeg',
+  size: 10,
+  state: ItemState.discovered,
+  isLivePhoto: false,
+);
+
+/// Lets real async work (drift, debounces) run, then settles the frames.
+Future<void> settle(WidgetTester t, [int ms = 50]) async {
+  await t.runAsync(() => Future<void>.delayed(Duration(milliseconds: ms)));
+  await t.pumpAndSettle();
+}
+
 Future<void> shutDown(WidgetTester t, Booted b) async {
   await t.pumpWidget(const SizedBox.shrink());
+  // Providers the screens left dispose (and close their drift queries).
+  await t.pump(const Duration(milliseconds: 10));
   b.container.dispose();
   await t.pump();
+  await t.pump(const Duration(milliseconds: 10));
 }
 
 void main() {
@@ -225,6 +262,55 @@ void main() {
       () => c.read(appDbProvider).getMeta('library_owner'),
     );
     expect(owner, isNull);
+    await shutDown(t, b);
+  });
+
+  testWidgets('pairing after an unpaired launch: the timeline recovers', (
+    t,
+  ) async {
+    final b = await boot(t);
+    expect(b.location, '/pair');
+    final c = b.container;
+    // The unpaired launch already built the timeline's providers.
+    c.read(timelineSectionsProvider);
+    await settle(t);
+
+    final at = DateTime.now().subtract(const Duration(days: 40));
+    b.host.items = [phoneItem('p1', at)];
+    b.host.connection = paired();
+    c.invalidate(serverConnectedProvider); // what a successful pairing does
+    await settle(t);
+    await settle(t);
+    expect(b.location, '/photos');
+    expect(find.text('Could not load your photos.'), findsNothing);
+    expect(find.byKey(const ValueKey('local:p1')), findsOneWidget);
+    await shutDown(t, b);
+  });
+
+  testWidgets('a phone-only item in a new month appears', (t) async {
+    final b = await boot(t, connection: paired());
+    final c = b.container;
+    final first = DateTime.now().subtract(const Duration(days: 40));
+    expect(find.text('No photos yet.'), findsOneWidget);
+
+    final item = phoneItem('p2', first);
+    b.host.items = [item];
+    (c.read(engineProvider) as PigeonEngine).onItemChanged(item);
+    await t.pump(const Duration(milliseconds: 400)); // the debounce
+    await settle(t);
+    await settle(t);
+    expect(find.byKey(const ValueKey('local:p2')), findsOneWidget);
+    await shutDown(t, b);
+  });
+
+  testWidgets('pairing asks for photo access', (t) async {
+    final b = await boot(t);
+    final c = b.container;
+    b.host.connection = paired();
+    await t.runAsync(
+      () => requestAccessAfterPairing(c.read(engineProvider)),
+    );
+    expect(b.host.mediaAccessRequests, 1);
     await shutDown(t, b);
   });
 }
