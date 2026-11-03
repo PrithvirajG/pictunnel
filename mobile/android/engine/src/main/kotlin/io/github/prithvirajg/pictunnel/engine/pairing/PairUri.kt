@@ -54,10 +54,14 @@ object PairUri {
         return PairUriResult.Ok(PairInfo(sid, code, fp, endpoints))
     }
 
+    /** The length of an unpadded base64url SHA-256. */
+    const val FULL_PIN_LENGTH = 43
+
     /**
      * Pinning rule: a chain the system trusts (and that matches the host) is
      * accepted; otherwise the leaf SPKI SHA-256 must equal [pin]. Both are
-     * unpadded base64url; padding is ignored and the compare is constant-time.
+     * normalized as Dart and Swift do ([normalizePin]); anything but a full
+     * 43-character pin is rejected, and the compare is constant-time.
      */
     fun acceptConnection(
         systemTrusted: Boolean,
@@ -65,10 +69,15 @@ object PairUri {
         pin: String,
     ): Boolean {
         if (systemTrusted) return true
-        val a = spkiSha256.trimEnd('=').toByteArray(Charsets.US_ASCII)
-        val b = pin.trimEnd('=').toByteArray(Charsets.US_ASCII)
-        return a.isNotEmpty() && MessageDigest.isEqual(a, b)
+        val want = normalizePin(pin)
+        if (want.length != FULL_PIN_LENGTH) return false
+        val a = normalizePin(spkiSha256).toByteArray(Charsets.US_ASCII)
+        val b = want.toByteArray(Charsets.US_ASCII)
+        return MessageDigest.isEqual(a, b)
     }
+
+    /** Trims, drops `=` padding and maps standard base64 (`+`, `/`) to base64url (`-`, `_`). */
+    fun normalizePin(pin: String): String = pin.trim().trimEnd('=').replace('+', '-').replace('/', '_')
 
     private fun query(raw: String?): List<Pair<String, String>> =
         raw
