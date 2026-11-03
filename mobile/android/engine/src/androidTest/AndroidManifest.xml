@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<!-- The engine sends PicTunnel-Client: android/<versionName>. A library's test APK has no
+     version of its own, so the engine would send 0.0.0 and a real server (min_version
+     android 0.1.0) answers 426 client_too_old (RealServerBackupInstrumentedTest). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    android:versionCode="1"
+    android:versionName="0.1.0">
     <application>
         <!-- Hosts the system delete dialog in deleteRequestShowsSystemDialog. -->
         <activity
