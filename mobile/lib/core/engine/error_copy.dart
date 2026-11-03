@@ -5,25 +5,36 @@ library;
 
 import 'package:flutter/services.dart' show PlatformException;
 
+const _unreachableCopy =
+    "Can't reach your server. Check that your phone is on the same network, or that the server is online.";
+const _internalCopy = 'Something went wrong inside PicTunnel. Try again.';
+
+/// Copy per engine error code. Both engines' codes are covered: Android maps
+/// transport failures to `unreachable` and the rest to `internal`; iOS can
+/// pass a raw transport kind (`offline`, `timeout`, `reset`, `tls`) or
+/// `engine_error`, which read the same as their Android counterparts.
+/// `not_found` and `invalid_request` come from either side of the connection
+/// (a phone item or a server answer), so their copy names neither.
 const engineErrorCopy = <String, String>{
   'not_paired': 'This phone is not paired with a server. Pair it first.',
   'needs_repair':
       'Your server no longer recognises this phone. Pair it again to continue.',
   'no_activity': 'Open PicTunnel and try again.',
-  'not_found': 'That item is no longer on this phone.',
+  'not_found': 'That item is no longer available.',
   'permission':
       'PicTunnel needs access to your photos for this. Allow it in Settings.',
-  'unreachable':
-      "Can't reach your server. Check that your phone is on the same network, or that the server is online.",
-  'offline': "You're offline. Connect to a network and try again.",
-  'timeout': 'Your server took too long to answer. Try again.',
-  'tls':
-      "This server's security certificate has changed. Pair again if you reinstalled PicTunnel on your computer.",
+  'unreachable': _unreachableCopy,
+  'offline': _unreachableCopy,
+  'timeout': _unreachableCopy,
+  'reset': _unreachableCopy,
+  'tls': _unreachableCopy,
+  'internal': _internalCopy,
+  'engine_error': _internalCopy,
   'client_too_old':
       'This version of PicTunnel is too old for your server. Update the app.',
   'rate_limited': 'Too many attempts. Wait a minute and try again.',
   'bad_response': 'Your server sent an answer PicTunnel did not understand.',
-  'invalid_request': "The server couldn't accept that request.",
+  'invalid_request': "That request couldn't be completed. Try again.",
   'undo_failed': 'The server did not confirm. Try again.',
   'insufficient_storage': 'Your server is out of space.',
   'quota_exceeded': 'Your storage limit on the server is reached.',

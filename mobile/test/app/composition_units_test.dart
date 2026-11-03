@@ -122,6 +122,28 @@ void main() {
       expect(freeUpSkipReason('server_conflict'),
           'Not confirmed on the server');
     });
+
+    test('iOS raw transport kinds read like Android unreachable', () {
+      final unreachable =
+          engineErrorMessage(PlatformException(code: 'unreachable'));
+      for (final code in ['offline', 'timeout', 'reset', 'tls']) {
+        expect(engineErrorMessage(PlatformException(code: code)), unreachable,
+            reason: code);
+        expect(failureFor(PlatformException(code: code)).message, unreachable,
+            reason: 'pairing $code');
+      }
+      final internal = engineErrorMessage(PlatformException(code: 'internal'));
+      expect(internal, isNot(genericErrorCopy));
+      expect(
+          engineErrorMessage(PlatformException(code: 'engine_error')), internal);
+    });
+
+    test('not_found and invalid_request name neither side', () {
+      expect(engineErrorMessage(PlatformException(code: 'not_found')),
+          isNot(contains('phone')));
+      expect(engineErrorMessage(PlatformException(code: 'invalid_request')),
+          isNot(contains('server')));
+    });
   });
 
   test('appVersion matches pubspec.yaml', () {
