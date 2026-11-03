@@ -19,10 +19,14 @@ import (
 // loopback listener's base URL. The server stops when the test ends.
 func startServe(t *testing.T) string {
 	t.Helper()
+	// Made before the stop cleanup is registered: cleanups run last first, so the
+	// server stops (and releases the database, which Windows requires) before
+	// the directory is removed.
+	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	var out, errOut syncBuf
 	done := make(chan int, 1)
-	go func() { done <- run(ctx, append([]string{"serve"}, serveFlags(t.TempDir())...), nil, &out, &errOut) }()
+	go func() { done <- run(ctx, append([]string{"serve"}, serveFlags(dir)...), nil, &out, &errOut) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
