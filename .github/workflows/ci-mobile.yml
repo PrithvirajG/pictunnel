@@ -3,16 +3,17 @@ on:
   workflow_dispatch:
   push:
     branches: [main, "feat/**"]
-    paths: ["mobile/**", "api/protocol/**", "Taskfile.yml", "tools/ci/android-instrumented.sh", ".github/workflows/ci-mobile.yml"]
+    paths: ["mobile/**", "api/protocol/**", "server/**", "Taskfile.yml", "tools/ci/android-instrumented.sh", ".github/workflows/ci-mobile.yml"]
   pull_request:
-    paths: ["mobile/**", "api/protocol/**", "Taskfile.yml", "tools/ci/android-instrumented.sh", ".github/workflows/ci-mobile.yml"]
+    paths: ["mobile/**", "api/protocol/**", "server/**", "Taskfile.yml", "tools/ci/android-instrumented.sh", ".github/workflows/ci-mobile.yml"]
 permissions:
   contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  # flutter analyze, flutter test (unit, widget, vectors and goldens) and a debug APK.
+  # flutter analyze, flutter test (unit, widget, vectors and goldens), a debug APK and a
+  # release APK (R8/minify issues show up only in release).
   flutter:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -34,7 +35,10 @@ jobs:
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # A zone east of UTC, so the month-boundary tests see local and UTC months differ.
       - run: task test:mobile TOOLS_MODE=native
+        env:
+          TZ: Asia/Kolkata
       - name: Upload golden failures
         if: failure()
         uses: actions/upload-artifact@v7.0.2
@@ -45,6 +49,10 @@ jobs:
       - name: Build Android debug APK
         working-directory: mobile
         run: flutter build apk --debug
+      # Still signed with the debug key (see the TODO in android/app/build.gradle.kts).
+      - name: Build Android release APK
+        working-directory: mobile
+        run: flutter build apk --release
 
   # Regenerating the Pigeon bridge must reproduce the committed Dart, Kotlin and Swift.
   pigeon-drift:
