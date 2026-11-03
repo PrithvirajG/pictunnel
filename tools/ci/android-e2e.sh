@@ -74,8 +74,19 @@ esac
 echo "::endgroup::"
 
 echo "::group::push the photo into MediaStore"
-adb shell mkdir -p /sdcard/Pictures
-adb push "$jpeg" "/sdcard/Pictures/$name"
+# Shared storage can refuse writes for a moment after boot ("remote couldn't create file"):
+# stage the file in /data/local/tmp, then copy it as the shell user, retrying.
+adb push "$jpeg" "/data/local/tmp/$name"
+pushed=""
+for _ in $(seq 1 20); do
+  if adb shell "mkdir -p /sdcard/Pictures && cp /data/local/tmp/$name /sdcard/Pictures/$name"; then
+    pushed=yes
+    break
+  fi
+  sleep 3
+done
+[ -n "$pushed" ] || fail "could not write /sdcard/Pictures/$name"
+adb shell rm -f "/data/local/tmp/$name"
 adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "file:///sdcard/Pictures/$name" > /dev/null
 indexed=""
 for _ in $(seq 1 30); do
