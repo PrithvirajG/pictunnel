@@ -3,6 +3,7 @@
 //	pictunnel serve [flags]               run the server
 //	pictunnel version                     print the version
 //	pictunnel reset-password <user> [flags]  set a new random password (offline)
+//	pictunnel pair [flags]                create a pairing code and QR for a phone
 //
 // Flags are the config keys (S§10.2), e.g. --data-dir, --server.https-addr,
 // --discovery.mdns=false; env PICTUNNEL_<SECTION>_<KEY> and
@@ -30,6 +31,7 @@ const usage = `usage:
   pictunnel serve [flags]
   pictunnel version
   pictunnel reset-password <user> [flags]
+  pictunnel pair [--user NAME] [--password PW] [--create] [--url URL] [--uri-only]
 `
 
 func main() {
@@ -49,6 +51,8 @@ func run(ctx context.Context, args, env []string, stdout, stderr io.Writer) int 
 		return 0
 	case "serve":
 		return serve(ctx, args[1:], env, stdout, stderr)
+	case "pair":
+		return pairCmd(ctx, args[1:], env, stdout, stderr)
 	case "reset-password":
 		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 			_, _ = fmt.Fprint(stderr, usage)
