@@ -3,6 +3,8 @@
 /// (spec M§8).
 library;
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -21,6 +23,23 @@ final deviceNameProvider = Provider<String>((_) => 'My phone');
 final onPairedProvider = Provider<Future<void> Function(PairResult)>(
   (_) => (_) async {},
 );
+
+/// Right after pairing, asks for photo access (and, on Android 13+,
+/// notifications, in the same system dialog). On iOS it only asks while
+/// access is undecided or denied: there the request for limited access opens
+/// the Settings app, which would be a jarring first step. Never fails the
+/// pairing.
+Future<void> requestAccessAfterPairing(Engine engine) async {
+  try {
+    if (defaultTargetPlatform != TargetPlatform.android) {
+      final status = await engine.getStatus();
+      if (status.mediaAccess != MediaAccess.none) return;
+    }
+    await engine.requestMediaAccess();
+  } catch (_) {
+    // No activity, or the engine is not ready: the banner offers it later.
+  }
+}
 
 /// A user-facing pairing failure.
 class PairFailure {
@@ -56,7 +75,6 @@ const _copy = <String, String>{
       'That code has expired or was already used. Show a new code on your computer.',
   'unreachable':
       "Can't reach your server. Check that your phone is on the same network, or that the server is online.",
-  'offline': "You're offline. Connect to a network and try again.",
   'rate_limited': 'Too many attempts. Wait a minute and try again.',
   'client_too_old': 'This version of PicTunnel is too old for your server. Update the app.',
   'not_pictunnel':
@@ -155,6 +173,7 @@ class QrPairingController extends Notifier<QrPairingState> {
         deviceName: ref.read(deviceNameProvider),
       ));
       await ref.read(onPairedProvider)(result);
+      await requestAccessAfterPairing(engine);
       await engine.start();
       ref.invalidate(serverConnectedProvider);
     } catch (e) {
@@ -248,6 +267,7 @@ class ManualPairingController extends Notifier<ManualPairingState> {
         pinnedFp: id.fpFull,
       ));
       await ref.read(onPairedProvider)(result);
+      await requestAccessAfterPairing(engine);
       await engine.start();
       ref.invalidate(serverConnectedProvider);
     } catch (e) {

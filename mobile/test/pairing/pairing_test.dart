@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -54,6 +55,13 @@ Future<Harness> pump(WidgetTester t, {FakeEngine? engine}) async {
   );
   await t.pumpAndSettle();
   return Harness(e, s, c);
+}
+
+/// No activity can show the permission dialog.
+class _NoActivityEngine extends FakeEngine {
+  @override
+  Future<MediaAccess> requestMediaAccess() async =>
+      throw PlatformException(code: 'no_activity');
 }
 
 Future<void> scanGood(WidgetTester t, Harness h) async {
@@ -152,6 +160,48 @@ void main() {
       expect(h.engine.pairRequests, hasLength(1));
       expect(h.engine.pairRequests.single.qrUri, goodUri);
       expect(h.engine.startCalls, 1);
+      expect(h.engine.mediaAccessRequests, 1,
+          reason: 'Android asks for photo access right after pairing');
+      expect(h.location, '/photos');
+    });
+
+    for (final access in MediaAccess.values) {
+      testWidgets('iOS asks after pairing only when access is $access',
+          (t) async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        try {
+          final e = FakeEngine();
+          e.status = BackupStatus(
+            backedUp: 0,
+            total: 0,
+            queued: 0,
+            needsAttention: 0,
+            skipped: 0,
+            freeableBytes: 0,
+            paused: false,
+            preparing: 0,
+            mediaAccess: access,
+          );
+          final h = await pump(t, engine: e);
+          await scanGood(t, h);
+          await t.tap(find.text('Connect and start backup'));
+          await t.pumpAndSettle();
+          expect(h.engine.startCalls, 1);
+          expect(h.engine.mediaAccessRequests,
+              access == MediaAccess.none ? 1 : 0);
+        } finally {
+          debugDefaultTargetPlatformOverride = null;
+        }
+      });
+    }
+
+    testWidgets('a failing access request never fails the pairing',
+        (t) async {
+      final h = await pump(t, engine: _NoActivityEngine());
+      await scanGood(t, h);
+      await t.tap(find.text('Connect and start backup'));
+      await t.pumpAndSettle();
+      expect(h.engine.startCalls, 1);
       expect(h.location, '/photos');
     });
 
@@ -242,6 +292,7 @@ void main() {
       expect(r.code, 'ABCD-EFGH-JK');
       expect(r.pinnedFp, h.engine.identity.fpFull);
       expect(r.qrUri, isNull);
+      expect(h.engine.mediaAccessRequests, 1);
       expect(h.location, '/photos');
     });
 
