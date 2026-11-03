@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main, "feat/**"]
-    paths: ["mobile/**", "api/protocol/**", "server/**", "Taskfile.yml", "tools/ci/android-instrumented.sh", ".github/workflows/ci-mobile.yml"]
+    paths: ["mobile/**", "api/protocol/**", "server/**", "Taskfile.yml", "tools/ci/android-instrumented.sh", "tools/ci/android-e2e.sh", ".github/workflows/ci-mobile.yml"]
   pull_request:
-    paths: ["mobile/**", "api/protocol/**", "server/**", "Taskfile.yml", "tools/ci/android-instrumented.sh", ".github/workflows/ci-mobile.yml"]
+    paths: ["mobile/**", "api/protocol/**", "server/**", "Taskfile.yml", "tools/ci/android-instrumented.sh", "tools/ci/android-e2e.sh", ".github/workflows/ci-mobile.yml"]
 permissions:
   contents: read
 concurrency:
@@ -53,6 +53,21 @@ jobs:
       - name: Build Android release APK
         working-directory: mobile
         run: flutter build apk --release
+      # Sideloadable builds for testing on a phone (docs/prototype-android.md).
+      - name: Upload the debug APK
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: pictunnel-android-debug-apk
+          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload the release APK
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: pictunnel-android-release-apk
+          path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
 
   # Regenerating the Pigeon bridge must reproduce the committed Dart, Kotlin and Swift.
   pigeon-drift:
@@ -186,6 +201,62 @@ jobs:
             mobile/android/engine/build/reports/androidTests/
             mobile/android/engine/build/outputs/androidTest-results/
             .cache/instrumented/
+          if-no-files-found: ignore
+
+  # The first real backup end to end (tools/ci/android-e2e.sh): pictunnel serve built from this
+  # commit on the runner, reached from an API 34 emulator at 10.0.2.2; pairing, a MediaStore
+  # photo, a sync run through the real EngineHost, then the asset checked on the server.
+  android-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - id: flutter
+        run: echo "version=$(cat mobile/.flutter-version)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          cache: true
+      - name: Build pictunnel
+        working-directory: server
+        run: CGO_ENABLED=0 go build -o ../.cache/pictunnel ./cmd/pictunnel
+      # Flutter writes the Gradle wrapper on its first build.
+      - name: Build the engine test APK
+        working-directory: mobile
+        run: |
+          flutter pub get
+          flutter build apk --debug
+          (cd android && ./gradlew :engine:assembleDebugAndroidTest --no-daemon)
+      - name: End-to-end backup (API 34)
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash tools/ci/android-e2e.sh
+      - name: Upload server log, logcat and responses
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: android-e2e
+          path: .cache/e2e/
           if-no-files-found: ignore
 
   # The iOS engine on macOS (unit, vectors, real-server integration over pinned TLS), the
