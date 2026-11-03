@@ -15,6 +15,12 @@ Self-hosted photo and video backup that installs like a desktop app, backs up ph
 | `ml/` | Optional machine-learning worker | AGPL-3.0 |
 | `docs/` | Design specs, plans, ADRs | AGPL-3.0 |
 
+## Try it on Android
+
+[`docs/prototype-android.md`](docs/prototype-android.md) is the quickstart for the Android
+prototype: the server in Docker on your PC (`task proto:up`, `task proto:pair`), the debug
+APK from CI or a local build, pairing, the first backup, and troubleshooting.
+
 ## Running the server
 
 ```sh

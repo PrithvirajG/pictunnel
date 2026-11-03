@@ -14,7 +14,22 @@ with [`api/protocol/sync-protocol.md`](../../api/protocol/sync-protocol.md).
 pictunnel serve [flags]                    # run the server
 pictunnel version                          # print the version
 pictunnel reset-password <user> [flags]    # offline: new random password, signs out the user's devices
+pictunnel pair [--user admin] [--password PW] [--create] [--png FILE] [--uri-only] [--url URL]
+                                           # pairing code and QR code for a phone, from the server machine
 ```
+
+`pair` talks to the running server's loopback listener (`--url`, default
+`http://127.0.0.1:8080`), so it needs no setup token. With `--create` it first
+creates `--user` as the admin when the server has no account yet, generating
+a password if none is given (`--password` or `PICTUNNEL_PASSWORD`) and printing
+it once. It then prints the pairing code, a terminal QR code, the certificate
+pin and the endpoints. `--png` also writes the QR code as an image, and
+`--uri-only` prints only the `pictunnel://pair` link.
+
+In Docker, `deploy/docker-compose.yml` runs the server image built from
+`server/Dockerfile`; see [`docs/prototype-android.md`](../prototype-android.md)
+and the `proto:*` tasks. The container cannot see the host's LAN address, so the
+compose file sets `server.public_urls` to it.
 
 From a checkout: `cd server && go run ./cmd/pictunnel serve --data-dir ./data`.
 

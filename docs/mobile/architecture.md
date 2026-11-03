@@ -112,9 +112,10 @@ Run one container at a time on a small machine; Gradle and SwiftPM each want sev
 
 | Job | Runner | What |
 |---|---|---|
-| `flutter` | ubuntu | analyze, tests with goldens, debug APK |
+| `flutter` | ubuntu | analyze, tests with goldens, debug and release APKs (uploaded as `pictunnel-android-debug-apk` and `pictunnel-android-release-apk`) |
 | `pigeon-drift` | ubuntu | regenerate the bridge, `git diff --exit-code` |
 | `engine-kotlin` | ubuntu | generated Kotlin client and vectors |
 | `engine-android-unit` | ubuntu | builds the server, `:engine:testDebugUnitTest` with `PICTUNNEL_BIN` |
 | `engine-android-instrumented` | ubuntu + API 34 x86_64 emulator | `:engine:connectedDebugAndroidTest`, the partial-access run (`pm revoke`/`pm grant`, then `am instrument`), and a smoke launch of the app with the real bridge (`tools/ci/android-instrumented.sh`) |
+| `android-e2e` | ubuntu + API 34 x86_64 emulator | the real backup end to end: `pictunnel serve` from the commit on the runner, reached at `10.0.2.2`; pairing, a MediaStore JPEG and a sync run through the real `EngineHost` (`RealServerBackupInstrumentedTest`), then the asset checked through the server API (`tools/ci/android-e2e.sh`) |
 | `engine-ios` | macos | builds the server for darwin/arm64, `swift test` for the engine (pinned TLS integration included), EngineAPI tests, `flutter build ios --debug --no-codesign` |
