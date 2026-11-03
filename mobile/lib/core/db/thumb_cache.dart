@@ -6,6 +6,7 @@ import 'package:pictunnel_api/pictunnel_api.dart';
 
 import '../api/api_client.dart';
 import '../decisions/decide.dart';
+import '../files/safe_name.dart';
 import 'app_db.dart';
 
 /// On-disk LRU of server thumbnails, evicting by `lastUsedAt` once the total
@@ -69,8 +70,10 @@ class ThumbCache {
     }
 
     await dir.create(recursive: true);
-    final file =
-        File('${dir.path}${Platform.pathSeparator}$assetId-$size.jpg');
+    final file = File(
+      '${dir.path}${Platform.pathSeparator}'
+      '${safeFileComponent(assetId)}-${safeFileComponent(size)}.jpg',
+    );
     await file.writeAsBytes(bytes, flush: true);
     await db.into(db.thumbEntries).insertOnConflictUpdate(ThumbEntry(
           assetId: assetId,
@@ -93,17 +96,30 @@ class ThumbCache {
             ..where((t) => t.assetId.equals(assetId) & t.size.equals(size)))
           .go();
 
+  static const _evictBatch = 64;
+
+  /// Sums the cache in SQL; only when it is over budget are the least
+  /// recently used rows read, a small batch at a time.
   Future<void> _evict() async {
-    final rows = await (db.select(db.thumbEntries)
-          ..orderBy([(t) => OrderingTerm.asc(t.lastUsedAt)]))
-        .get();
-    var total = rows.fold<int>(0, (s, r) => s + r.bytes);
-    for (final r in rows) {
-      if (total <= budgetBytes) break;
-      final f = File(r.path);
-      if (f.existsSync()) await f.delete();
-      await _forget(r.assetId, r.size);
-      total -= r.bytes;
+    final sum = db.thumbEntries.bytes.sum();
+    final total =
+        (await (db.selectOnly(db.thumbEntries)..addColumns([sum])).getSingle())
+            .read(sum) ??
+        0;
+    var over = total - budgetBytes;
+    while (over > 0) {
+      final batch = await (db.select(db.thumbEntries)
+            ..orderBy([(t) => OrderingTerm.asc(t.lastUsedAt)])
+            ..limit(_evictBatch))
+          .get();
+      if (batch.isEmpty) break;
+      for (final r in batch) {
+        if (over <= 0) break;
+        final f = File(r.path);
+        if (f.existsSync()) await f.delete();
+        await _forget(r.assetId, r.size);
+        over -= r.bytes;
+      }
     }
   }
 }
