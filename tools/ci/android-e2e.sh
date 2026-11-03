@@ -24,7 +24,7 @@ rm -rf "$out"
 mkdir -p "$out"
 
 bin="$root/.cache/pictunnel"
-apk="$root/mobile/android/engine/build/outputs/apk/androidTest/debug/engine-debug-androidTest.apk"
+apk="$root/mobile/build/engine/outputs/apk/androidTest/debug/engine-debug-androidTest.apk"
 jpeg="$root/server/internal/media/testdata/exif_rot6.jpg"
 test_pkg=io.github.prithvirajg.pictunnel.engine.test
 runner="$test_pkg/androidx.test.runner.AndroidJUnitRunner"
@@ -81,13 +81,13 @@ indexed=""
 for _ in $(seq 1 30); do
   adb shell content query --uri content://media/external/images/media --projection _id:_display_name:_size \
     | tr -d '\r' > "$out/mediastore.txt" || true
-  if grep -q "_display_name=$name," "$out/mediastore.txt"; then
+  if grep -q "_display_name=$name, _size=$size" "$out/mediastore.txt"; then
     indexed=yes
     break
   fi
   sleep 1
 done
-[ -n "$indexed" ] || fail "MediaStore did not index $name"
+[ -n "$indexed" ] || fail "MediaStore did not index $name with its size"
 grep "$name" "$out/mediastore.txt"
 echo "::endgroup::"
 

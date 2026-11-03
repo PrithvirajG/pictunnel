@@ -149,7 +149,7 @@ jobs:
         uses: actions/upload-artifact@v7.0.2
         with:
           name: engine-android-unit-reports
-          path: mobile/android/engine/build/reports/tests/
+          path: mobile/build/engine/reports/tests/
           if-no-files-found: ignore
 
   # Instrumented tests on an API 34 emulator: scan, WorkManager, Keystore, the delete
@@ -198,8 +198,8 @@ jobs:
         with:
           name: engine-android-instrumented
           path: |
-            mobile/android/engine/build/reports/androidTests/
-            mobile/android/engine/build/outputs/androidTest-results/
+            mobile/build/engine/reports/androidTests/
+            mobile/build/engine/outputs/androidTest-results/
             .cache/instrumented/
           if-no-files-found: ignore
 
