@@ -42,3 +42,6 @@ __pycache__/
 
 # Dart / Flutter (flutter create adds mobile/.gitignore for the rest)
 .dart_tool/
+
+# task proto:pair output
+deploy/pairing-qr.png

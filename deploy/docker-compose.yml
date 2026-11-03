@@ -1,0 +1,36 @@
+# PicTunnel server for a home LAN (prototype). From the repository root:
+#
+#   task proto:up      build and start (finds this machine's LAN IP)
+#   task proto:pair    create the admin on first run, print a pairing QR code
+#   task proto:logs    follow the logs
+#   task proto:down    stop (the data volume is kept)
+#
+# See docs/prototype-android.md. Without Task:
+#   PICTUNNEL_LAN_IP=192.168.1.20 docker compose -f deploy/docker-compose.yml up -d --build
+name: pictunnel-proto
+
+services:
+  pictunnel:
+    build:
+      context: ../server
+      args:
+        VERSION: ${PICTUNNEL_VERSION:-0.1.0-proto}
+    image: pictunnel-proto:local
+    hostname: pictunnel
+    restart: unless-stopped
+    ports:
+      - "${PICTUNNEL_PORT:-8443}:8443"
+    environment:
+      PICTUNNEL_SERVER_NAME: ${PICTUNNEL_SERVER_NAME:-PicTunnel}
+      # The address phones use. The container only knows its own Docker IP,
+      # so the host's LAN address goes into the pairing QR code explicitly.
+      PICTUNNEL_SERVER_PUBLIC_URLS: https://${PICTUNNEL_LAN_IP:?set PICTUNNEL_LAN_IP to this machine's LAN IP (task proto:up does it)}:${PICTUNNEL_PORT:-8443}
+      # mDNS does not cross Docker's bridge network; pair by QR code instead.
+      PICTUNNEL_DISCOVERY_MDNS: "false"
+      PICTUNNEL_LOG_FORMAT: text
+    volumes:
+      - pictunnel-data:/data
+    mem_limit: 1g
+
+volumes:
+  pictunnel-data:

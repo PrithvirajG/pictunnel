@@ -33,7 +33,66 @@ tasks:
   test:tools:
     desc: Tests for repository check scripts
     cmds:
-      - node --test "tools/ci/*.test.mjs"
+      - node --test "tools/ci/*.test.mjs" "tools/dev/*.test.mjs"
+
+  # Prototype server on the LAN (docs/prototype-android.md): Docker Compose project
+  # pictunnel-proto, data in the pictunnel-proto_pictunnel-data volume. Only proto:up uses
+  # PICTUNNEL_LAN_IP; the other tasks set a placeholder because the compose file requires it.
+  proto:up:
+    desc: Build and start the PicTunnel server in Docker on this machine's LAN IP (override with LAN_IP=…)
+    vars:
+      LAN_IP:
+        sh: node tools/dev/lan-ip.mjs
+    env:
+      PICTUNNEL_LAN_IP: "{{.LAN_IP}}"
+    preconditions:
+      - sh: '[ -n "{{.LAN_IP}}" ]'
+        msg: "No LAN IPv4 address found. Pass it: task proto:up LAN_IP=192.168.1.20"
+    cmds:
+      - docker compose -f deploy/docker-compose.yml up -d --build
+      - 'echo "PicTunnel is starting on https://{{.LAN_IP}}:8443 (the phone pairs to this address). Next: task proto:pair"'
+
+  proto:pair:
+    desc: Print a pairing QR code (also deploy/pairing-qr.png); creates the admin on first run. Later runs need -- --password <pw>
+    env:
+      PICTUNNEL_LAN_IP: "0.0.0.0"
+    cmds:
+      - docker compose -f deploy/docker-compose.yml exec -T pictunnel pictunnel pair --create --png /tmp/pairing-qr.png {{.CLI_ARGS}}
+      - docker compose -f deploy/docker-compose.yml cp pictunnel:/tmp/pairing-qr.png deploy/pairing-qr.png
+      - echo "The QR code is also in deploy/pairing-qr.png (open it if the one above looks garbled)."
+
+  proto:logs:
+    desc: Follow the prototype server's logs (the certificate pin is printed at start)
+    env:
+      PICTUNNEL_LAN_IP: "0.0.0.0"
+    cmds:
+      - docker compose -f deploy/docker-compose.yml logs -f --tail 100
+
+  proto:reset-password:
+    desc: Set a new random password for ACCOUNT (default admin); stops the server for a moment
+    vars:
+      ACCOUNT: '{{.ACCOUNT | default "admin"}}'
+    env:
+      PICTUNNEL_LAN_IP: "0.0.0.0"
+    cmds:
+      - docker compose -f deploy/docker-compose.yml stop pictunnel
+      - defer: docker compose -f deploy/docker-compose.yml start pictunnel
+      - docker compose -f deploy/docker-compose.yml run --rm --no-deps pictunnel reset-password {{.ACCOUNT}}
+
+  proto:down:
+    desc: Stop the prototype server (photos, accounts and keys stay in the volume)
+    env:
+      PICTUNNEL_LAN_IP: "0.0.0.0"
+    cmds:
+      - docker compose -f deploy/docker-compose.yml down
+
+  proto:wipe:
+    desc: Stop the prototype server and DELETE its data volume (photos, accounts, keys; phones must pair again)
+    prompt: This deletes every photo, account and key of the prototype server. Continue?
+    env:
+      PICTUNNEL_LAN_IP: "0.0.0.0"
+    cmds:
+      - docker compose -f deploy/docker-compose.yml down -v
 
   api:install:
     desc: Install API tooling dependencies
@@ -229,6 +288,13 @@ tasks:
     cmds:
       - cd mobile && flutter pub get && flutter build apk --debug
       - bash tools/ci/android-instrumented.sh
+
+  test:e2e:android:
+    desc: Real backup end to end against pictunnel built from this checkout (needs Go, Flutter, the Android SDK, jq and a booted API 34+ emulator on adb)
+    cmds:
+      - cd server && CGO_ENABLED=0 go build -o ../.cache/pictunnel ./cmd/pictunnel
+      - cd mobile && flutter pub get && flutter build apk --debug && cd android && ./gradlew :engine:assembleDebugAndroidTest --no-daemon
+      - bash tools/ci/android-e2e.sh
 
   test:engine:ios:
     desc: iOS engine tests plus the real-server integration tests (natively on macOS with pinned TLS; in Docker on Linux Swift over the loopback HTTP listener)

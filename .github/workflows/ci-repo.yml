@@ -16,6 +16,6 @@ jobs:
       - name: Line endings
         run: node tools/ci/check-eol.mjs
       - name: Repo script tests
-        run: node --test "tools/ci/*.test.mjs"
+        run: node --test "tools/ci/*.test.mjs" "tools/dev/*.test.mjs"
       - name: Lint workflows
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest -color

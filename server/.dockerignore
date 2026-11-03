@@ -1,0 +1,6 @@
+# Build context for server/Dockerfile: sources only.
+**/*_test.go
+**/testdata
+test/
+cover.out
+data/
