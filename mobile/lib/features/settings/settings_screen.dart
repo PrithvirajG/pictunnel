@@ -9,6 +9,7 @@ import '../../core/engine/engine.dart';
 import '../../core/engine/error_copy.dart';
 import '../backup/backup_providers.dart';
 import '../backup/format.dart';
+import 'battery_hint.dart';
 import 'free_up_sheet.dart';
 import 'server_section.dart';
 
@@ -76,6 +77,7 @@ class SettingsScreen extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                BatteryHintCard(),
                 _BackupSection(),
                 SizedBox(height: 20),
                 _StorageSection(),

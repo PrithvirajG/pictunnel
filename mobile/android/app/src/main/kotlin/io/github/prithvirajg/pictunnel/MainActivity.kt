@@ -36,11 +36,13 @@ class MainActivity : FlutterFragmentActivity() {
         host = h
         EngineHostApi.setUp(messenger, h)
         services.relay.attach(EngineEventsApi(messenger))
+        BatteryChannel.attach(this, messenger)
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         val messenger = flutterEngine.dartExecutor.binaryMessenger
         EngineHostApi.setUp(messenger, null)
+        BatteryChannel.detach(messenger)
         EngineServices.get(this).relay.detach()
         host?.close()
         host = null
